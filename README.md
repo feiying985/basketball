@@ -21,7 +21,9 @@
 │   │   ├── services/         # 任务存储、分析流程、检测器接口
 │   │   └── schemas.py        # 请求/响应模型
 │   └── tests/
-├── docs/research/            # 进球识别方案调研
+├── docs/
+│   ├── research/             # 进球识别方案调研
+│   └── design/               # App 交互流程设计
 └── .github/workflows/        # 服务端测试 + 安卓构建 CI
 ```
 
@@ -104,6 +106,7 @@ CI 会在 PR 上分别运行服务端测试和安卓构建：
 1. **接入识别算法**：YOLO 检测篮球/篮筐 → ByteTrack 跟踪 → 轨迹穿筐判定，替换 `StubShotDetector`。
    技术路线与候选项目见 [调研文档](docs/research/shot-recognition.md)。
 2. **App 采集流程**：录像/相册选择、上传进度、结果列表与人工纠正。
+   交互设计见 [docs/design/app-interaction-flow.md](docs/design/app-interaction-flow.md)。
 3. **数据集与评估**：公开数据集冷启动 + 自采场地数据微调，建立逐球准确率评估集。
 4. **端侧实时**：TFLite / NCNN 集成（第二阶段）。
 
