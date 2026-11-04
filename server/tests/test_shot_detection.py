@@ -11,7 +11,7 @@ from app.services.classical_shot_detection import (
     ShotDetectionConfig,
     VideoAnalysisError,
 )
-from tests.synthetic import write_dribble_video, write_shot_video
+from tests.synthetic import write_arc_video, write_dribble_video, write_shot_video
 
 
 def _detector(**overrides: object) -> ClassicalShotDetector:
@@ -45,6 +45,15 @@ def test_detects_near_miss(tmp_path: Path) -> None:
 
     assert result.shots
     assert all(not shot.made for shot in result.shots)
+
+
+def test_detects_two_shots_in_one_video(tmp_path: Path) -> None:
+    video = tmp_path / "two-shots.avi"
+    write_arc_video(video, arcs=[(320.0, 320.0), (390.0, 390.0)])
+
+    result = _detector().analyze(video)
+
+    assert [shot.made for shot in result.shots] == [True, False]
 
 
 def test_explains_missing_hoop(tmp_path: Path) -> None:

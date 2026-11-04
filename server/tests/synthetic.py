@@ -41,7 +41,26 @@ def write_shot_video(
     the rim or misses to the side.
     """
 
-    frames = max(int(FPS * duration_seconds), 2)
+    write_arc_video(
+        path,
+        arcs=[(apex_x, end_x)],
+        duration_seconds=duration_seconds,
+        with_rim=with_rim,
+        rim_color=rim_color,
+    )
+
+
+def write_arc_video(
+    path: Path,
+    *,
+    arcs: list[tuple[float, float]],
+    duration_seconds: float = 2.0,
+    with_rim: bool = True,
+    rim_color: tuple[int, int, int] = RIM_COLOR,
+) -> None:
+    """Write one shot arc per ``(apex_x, end_x)`` entry, back to back."""
+
+    frames_per_arc = max(int(FPS * duration_seconds), 2)
     writer = cv2.VideoWriter(
         str(path),
         cv2.VideoWriter_fourcc(*"MJPG"),
@@ -51,13 +70,14 @@ def write_shot_video(
     if not writer.isOpened():
         raise RuntimeError(f"could not open video writer for {path}")
     try:
-        for index in range(frames):
-            u = index / (frames - 1)
-            frame = _background()
-            if with_rim:
-                _draw_rim(frame, rim_color)
-            _draw_ball(frame, _arc_position(u, apex_x=apex_x, end_x=end_x))
-            writer.write(frame)
+        for apex_x, end_x in arcs:
+            for index in range(frames_per_arc):
+                u = index / (frames_per_arc - 1)
+                frame = _background()
+                if with_rim:
+                    _draw_rim(frame, rim_color)
+                _draw_ball(frame, _arc_position(u, apex_x=apex_x, end_x=end_x))
+                writer.write(frame)
     finally:
         writer.release()
 
