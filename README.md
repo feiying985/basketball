@@ -2,9 +2,11 @@
 
 安卓端 + 服务端 monorepo，目标是把「打篮球 → 录制视频 → 自动识别进球」做成可用的 MVP。
 
-> **当前状态：项目脚手架（MVP 第一步）。**
-> 安卓端与服务端骨架已就绪；进球识别检测器仍是占位实现，尚未接入 CV 模型。
-> GitHub 现成方案调研见 [docs/research/shot-recognition.md](docs/research/shot-recognition.md)。
+> **当前状态：MVP 第二步。**
+> 安卓端仍是连通性脚手架；服务端已接入基于 OpenCV 的经典进球识别基线
+> （颜色检测 + 轨迹 + 穿筐判定），无需模型文件即可运行。
+> GitHub 现成方案调研见 [docs/research/shot-recognition.md](docs/research/shot-recognition.md)，
+> 算法与限制见 [docs/shot-detection.md](docs/shot-detection.md)。
 
 ## 目录结构
 
@@ -18,10 +20,10 @@
 ├── server/                   # 服务端（Python 3.11 + FastAPI）
 │   ├── app/
 │   │   ├── api/routes.py     # HTTP 接口
-│   │   ├── services/         # 任务存储、分析流程、检测器接口
+│   │   ├── services/         # 任务存储、分析流程、跟踪/判定/检测器
 │   │   └── schemas.py        # 请求/响应模型
 │   └── tests/
-├── docs/research/            # 进球识别方案调研
+├── docs/                     # 进球识别方案调研 + 算法说明
 └── .github/workflows/        # 服务端测试 + 安卓构建 CI
 ```
 
@@ -36,7 +38,7 @@
                                                                │
                                                     ┌──────────▼───────────┐
                                                     │  ShotDetector 接口    │
-                                                    │  当前：占位实现       │
+                                                    │  当前：经典 CV 基线   │
                                                     │  下一步：YOLO + 跟踪  │
                                                     └──────────────────────┘
 ```
@@ -82,11 +84,35 @@ cd android
 
 任务状态：`queued → processing → completed / failed`。
 
-**注意**：当前检测器是占位实现，分析完成后 `result.shots` 为空，并带有 `note` 说明。
-这样接口和任务流程可以先联调，同时避免把「空结果」误认为真实识别。
+分析完成后 `result.shots` 返回识别到的投篮事件（`made=true` 为命中，
+`timestamp_seconds`/`frame_index` 指向球穿过篮筐附近的时刻）。
+`result.note` 在未检测到篮筐、篮球或投篮时说明原因。
+
+**当前基线限制**：依赖画面中的橙色篮球和橙色/红色篮筐、假设机位基本固定，
+只识别轨迹经过篮筐附近的投篮（远距离偏出的球可能不报）。算法和调参说明见
+[docs/shot-detection.md](docs/shot-detection.md)。
 
 支持格式：`.mp4`、`.mov`、`.m4v`、`.webm`、`.avi`、`.mkv`；单文件默认上限 200 MB
 （可用 `BASKETBALL_MAX_UPLOAD_BYTES` 调整，上传目录可用 `BASKETBALL_UPLOAD_DIR` 调整）。
+
+### 检测器配置
+
+服务端通过环境变量配置检测器（都有默认值，可不设置）：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `BASKETBALL_DETECTOR` | `classical` | `classical` 为 OpenCV 基线；`stub` 为不做识别的占位实现 |
+| `BASKETBALL_SAMPLE_FPS` | `10` | 抽帧分析的帧率，越高越准也越慢 |
+| `BASKETBALL_SHOT_COOLDOWN_SECONDS` | `1.5` | 两次进球判定的最小间隔，避免同一球重复计数 |
+| `BASKETBALL_HOOP_ROI` | 空 | 手动指定篮筐区域，格式 `x,y,width,height`（0-1 归一化）；用于白色/非橙色篮筐 |
+| `BASKETBALL_MAX_UPLOAD_BYTES` | `209715200` | 单文件上传上限（字节） |
+| `BASKETBALL_UPLOAD_DIR` | 系统临时目录 | 上传视频保存目录 |
+
+例如白色篮筐的球场：
+
+```bash
+BASKETBALL_HOOP_ROI=0.42,0.25,0.16,0.05 uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
 ## 测试
 
@@ -101,7 +127,8 @@ CI 会在 PR 上分别运行服务端测试和安卓构建：
 
 ## 下一步
 
-1. **接入识别算法**：YOLO 检测篮球/篮筐 → ByteTrack 跟踪 → 轨迹穿筐判定，替换 `StubShotDetector`。
+1. **升级识别算法**：当前 OpenCV 基线可用，但受颜色和机位限制；下一步用
+   YOLO/RT-DETR 检测篮球/篮筐 → ByteTrack 跟踪 → 轨迹穿筐判定，替换 `ClassicalShotDetector`。
    技术路线与候选项目见 [调研文档](docs/research/shot-recognition.md)。
 2. **App 采集流程**：录像/相册选择、上传进度、结果列表与人工纠正。
 3. **数据集与评估**：公开数据集冷启动 + 自采场地数据微调，建立逐球准确率评估集。
