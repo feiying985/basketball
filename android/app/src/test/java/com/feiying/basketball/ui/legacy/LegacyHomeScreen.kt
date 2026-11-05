@@ -1,4 +1,4 @@
-package com.feiying.basketball.ui
+package com.feiying.basketball.ui.legacy
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,8 +25,12 @@ import androidx.compose.ui.unit.dp
 import com.feiying.basketball.data.ServerHealth
 import kotlinx.coroutines.launch
 
+/**
+ * Verbatim copy of the pre-change `HomeScreen` (commit 3e38f72) used only to render the
+ * before screenshot in [HomeScreenshotTest]. Not part of the app.
+ */
 @Composable
-fun HomeScreen(modifier: Modifier = Modifier) {
+fun LegacyHomeScreen(modifier: Modifier = Modifier) {
     var status by remember { mutableStateOf("尚未检查服务端") }
     var checking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -66,9 +70,9 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                         text = "当前进度",
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    Step("1", "安卓端：单页骨架 + 服务端连通性检查")
-                    Step("2", "服务端：视频上传 + 分析任务 API（检测器为占位实现）")
-                    Step("3", "下一步：接入篮球/篮筐检测与轨迹判定（见 docs/research）")
+                    LegacyStep("1", "安卓端：单页骨架 + 服务端连通性检查")
+                    LegacyStep("2", "服务端：视频上传 + 分析任务 API（检测器为占位实现）")
+                    LegacyStep("3", "下一步：接入篮球/篮筐检测与轨迹判定（见 docs/research）")
                 }
             }
 
@@ -95,7 +99,7 @@ fun HomeScreen(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun Step(index: String, text: String) {
+private fun LegacyStep(index: String, text: String) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top,

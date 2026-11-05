@@ -2,8 +2,9 @@
 
 安卓端 + 服务端 monorepo，目标是把「打篮球 → 录制视频 → 自动识别进球」做成可用的 MVP。
 
-> **当前状态：项目脚手架（MVP 第一步）。**
-> 安卓端与服务端骨架已就绪；进球识别检测器仍是占位实现，尚未接入 CV 模型。
+> **当前状态：App 端 MVP 主流程已实现。**
+> 安卓端支持录制/相册选择、视频校验、上传与轮询、结果页和本地历史记录；
+> 进球识别检测器仍是占位实现，尚未接入 CV 模型。
 > GitHub 现成方案调研见 [docs/research/shot-recognition.md](docs/research/shot-recognition.md)。
 
 ## 目录结构
@@ -13,8 +14,8 @@
 ├── android/                  # 安卓 App（Kotlin + Jetpack Compose）
 │   └── app/src/main/java/com/feiying/basketball/
 │       ├── MainActivity.kt
-│       ├── ui/               # 首页与主题
-│       └── data/             # 服务端连通性检查
+│       ├── ui/               # 首页、录制、确认、分析、结果、历史与主题
+│       └── data/             # HTTP、Room、视频导入、设置
 ├── server/                   # 服务端（Python 3.11 + FastAPI）
 │   ├── app/
 │   │   ├── api/routes.py     # HTTP 接口
@@ -44,6 +45,18 @@
 MVP 先做**服务端离线分析**：App 只负责采集/上传，识别逻辑全部放在 Python 服务端，便于快速迭代模型。
 端侧实时识别放到后续阶段。
 
+## App 端流程
+
+主页「开始分析」→ 录制或从相册选择 → 确认视频（格式、大小、时长校验）→ 上传并轮询任务 →
+结果页查看命中/未中时间点与命中率 → 结果自动保存到本地记录。底部导航保留「分析」「记录」两个入口。
+
+- 录制使用 CameraX，最长 **20 分钟**，少于 1 秒不生成视频；
+- 相册选择使用系统 Photo Picker，不需要存储权限，选中后复制到应用缓存；
+- 上传上限与服务端一致（200 MB），显示真实字节进度，可取消；
+- 本地历史使用 Room 保存结果快照，服务端重启后仍可回看；
+- 服务端地址默认由 `build.gradle.kts` 配置。真机调试需要改地址时，在首页**长按服务状态**打开开发者设置，
+  普通用户看不到该入口。
+
 ## 快速开始
 
 ### 服务端
@@ -69,8 +82,8 @@ cd android
 ./gradlew :app:assembleDebug
 ```
 
-模拟器通过 `http://10.0.2.2:8000` 访问宿主机服务；真机调试时把
-`android/app/build.gradle.kts` 里的 `SERVER_BASE_URL` 改成电脑的局域网 IP。
+模拟器通过 `http://10.0.2.2:8000` 访问宿主机服务；真机调试时可在首页长按服务状态打开开发者设置修改地址，
+或把 `android/app/build.gradle.kts` 里的 `SERVER_BASE_URL` 改成电脑的局域网 IP。
 
 ## API
 
@@ -92,7 +105,8 @@ cd android
 
 ```bash
 cd server && python -m pytest -q     # 服务端接口测试
-cd android && ./gradlew :app:assembleDebug   # 安卓编译（需要 Android SDK）
+cd android && ./gradlew :app:assembleDebug        # 安卓编译（需要 Android SDK）
+cd android && ./gradlew :app:testDebugUnitTest    # 安卓单元测试（校验、格式化、轮询策略、JSON）
 ```
 
 CI 会在 PR 上分别运行服务端测试和安卓构建：
@@ -103,7 +117,7 @@ CI 会在 PR 上分别运行服务端测试和安卓构建：
 
 1. **接入识别算法**：YOLO 检测篮球/篮筐 → ByteTrack 跟踪 → 轨迹穿筐判定，替换 `StubShotDetector`。
    技术路线与候选项目见 [调研文档](docs/research/shot-recognition.md)。
-2. **App 采集流程**：录像/相册选择、上传进度、结果列表与人工纠正。
+2. **结果人工纠正**：在结果页本地覆盖命中/未中，不写回服务端（P1）。
 3. **数据集与评估**：公开数据集冷启动 + 自采场地数据微调，建立逐球准确率评估集。
 4. **端侧实时**：TFLite / NCNN 集成（第二阶段）。
 
@@ -111,7 +125,7 @@ CI 会在 PR 上分别运行服务端测试和安卓构建：
 
 - **服务端用 Python**：进球识别的开源生态（YOLO、OpenCV、跟踪算法）以 Python 为主，模型迭代最快；
   当前只暴露轻量 REST API，后续可平滑拆出推理服务。
-- **安卓用 Kotlin + Compose**：官方推荐技术栈，单 Activity 起步，后续接 CameraX 与上传。
+- **安卓用 Kotlin + Compose**：单 Activity + Navigation Compose，CameraX 采集、Media3 播放、Room 本地历史。
 - **视频处理放服务端**：MVP 阶段避免端侧模型体积、功耗和兼容性问题。
 
 ## 许可
