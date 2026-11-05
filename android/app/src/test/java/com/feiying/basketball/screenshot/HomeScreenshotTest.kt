@@ -59,6 +59,21 @@ class HomeScreenshotTest {
     }
 
     @Test
+    fun lightHome() {
+        setAppContent(Routes.HOME, darkTheme = false) {
+            HomeContent(
+                records = emptyList(),
+                health = HealthState.Unknown,
+                onStartAnalysis = {},
+                onOpenRecord = {},
+                onCheckHealth = {},
+                onDeveloperSettings = {},
+            )
+        }
+        capture("home-light.png")
+    }
+
+    @Test
     fun afterHome() {
         setAppContent(Routes.HOME) {
             HomeContent(
@@ -127,10 +142,11 @@ class HomeScreenshotTest {
 
     private fun setAppContent(
         route: String,
+        darkTheme: Boolean = true,
         content: @Composable () -> Unit,
     ) {
         compose.setContent {
-            BasketballTheme(darkTheme = false) {
+            BasketballTheme(darkTheme = darkTheme) {
                 AppScaffold(currentRoute = route, onNavigate = {}) { padding ->
                     Box(
                         modifier = Modifier
