@@ -1,4 +1,204 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">篮球进球识别</string>
+
+    <!-- 通用 -->
+    <string name="action_back">返回</string>
+    <string name="action_close">关闭</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_confirm">确定</string>
+    <string name="action_delete">删除</string>
+    <string name="action_retry">重试</string>
+    <string name="action_go_settings">去设置</string>
+    <string name="action_save">保存</string>
+    <string name="action_done">完成</string>
+    <string name="action_home">返回首页</string>
+    <string name="cd_back">返回</string>
+    <string name="cd_close">关闭</string>
+    <string name="cd_delete">删除记录</string>
+    <string name="cd_server_status">服务端连接状态</string>
+
+    <!-- 底部导航 -->
+    <string name="tab_analyze">分析</string>
+    <string name="tab_history">记录</string>
+
+    <!-- 首页 -->
+    <string name="home_title">篮球进球识别</string>
+    <string name="home_subtitle">录制或选择一段视频，自动识别进球</string>
+    <string name="home_first_steps">录制 → 上传 → 查看进球</string>
+    <string name="home_start_analysis">开始分析</string>
+    <string name="home_recent_title">最近一次</string>
+    <string name="home_recent_open">查看结果 ›</string>
+    <string name="home_no_records">还没有分析记录，去录制第一段视频吧</string>
+    <string name="home_server_label">服务端</string>
+    <string name="home_server_unknown">尚未检查</string>
+    <string name="home_server_checking">检查中…</string>
+    <string name="home_server_online">在线</string>
+    <string name="home_server_offline">连接失败</string>
+    <string name="home_server_check_hint">点击检查</string>
+    <string name="home_server_retry_hint">点击重试</string>
+    <string name="home_server_version">服务端 %1$s · 检测器 %2$s</string>
+    <string name="home_recent_summary">识别 %1$d 球 · 命中 %2$d</string>
+    <string name="home_recent_empty_summary">未识别到投篮</string>
+    <string name="home_developer_hint">长按服务状态打开开发者设置</string>
+
+    <!-- 采集方式 -->
+    <string name="capture_title">选择视频来源</string>
+    <string name="capture_record_title">录制视频</string>
+    <string name="capture_record_desc">打开相机，现场拍一段</string>
+    <string name="capture_gallery_title">从相册选择</string>
+    <string name="capture_gallery_desc">选择手机里已有的视频</string>
+    <string name="capture_camera_unavailable">当前设备没有可用相机</string>
+    <string name="capture_importing">正在导入视频…</string>
+
+    <!-- 导入错误 -->
+    <string name="import_error_unreadable">无法读取该视频，请换一段试试</string>
+    <string name="import_error_too_large">视频超过 200 MB，请裁剪或换一段视频</string>
+    <string name="import_error_storage">存储空间不足，无法保存视频</string>
+    <string name="import_error_copy">导入视频失败，请重试</string>
+
+    <!-- 录制 -->
+    <string name="record_permission_title">需要相机权限</string>
+    <string name="record_permission_rationale">用于拍摄投篮视频，视频只会在你点击分析后上传。</string>
+    <string name="record_permission_denied">请在系统设置中开启相机权限。</string>
+    <string name="record_request_permission">授权相机</string>
+    <string name="record_permission_again">再次请求</string>
+    <string name="record_microphone_denied">未授权麦克风，将录制无声视频</string>
+    <string name="record_start">开始录制</string>
+    <string name="record_ready">准备好后点击录制</string>
+    <string name="record_stop">停止</string>
+    <string name="record_recording">录制中</string>
+    <string name="record_preparing">正在准备相机…</string>
+    <string name="record_finalizing">正在生成视频…</string>
+    <string name="record_too_short">录制时间太短，请至少录制 1 秒</string>
+    <string name="record_max_reached">已达到 20 分钟上限，正在保存</string>
+    <string name="record_switch_camera">切换镜头</string>
+    <string name="record_torch_on">打开手电筒</string>
+    <string name="record_torch_off">关闭手电筒</string>
+    <string name="record_camera_error">相机启动失败，请关闭其他占用相机的应用后重试</string>
+    <string name="record_discard_title">放弃这段录制？</string>
+    <string name="record_discard_message">正在录制的视频不会保存。</string>
+    <string name="record_discard_confirm">放弃</string>
+    <string name="record_timer">%1$s / %2$s</string>
+    <string name="record_preview_title">预览录制</string>
+    <string name="record_use_video">使用这段视频</string>
+    <string name="record_rerecord">重录</string>
+    <string name="record_preview_hint">确认画面后继续，或重录一段</string>
+
+    <!-- 视频确认 -->
+    <string name="review_title">确认视频</string>
+    <string name="review_filename_label">文件名</string>
+    <string name="review_duration_label">时长</string>
+    <string name="review_size_label">大小</string>
+    <string name="review_source_label">来源</string>
+    <string name="review_source_record">现场录制</string>
+    <string name="review_source_gallery">相册</string>
+    <string name="review_invalid_format">不支持该视频格式，请选择 MP4 等常见格式</string>
+    <string name="review_too_large">视频超过 200 MB，请裁剪或换一段视频</string>
+    <string name="review_unreadable">无法读取该视频，请换一段试试</string>
+    <string name="review_long_warning">视频较长，分析可能需要更久</string>
+    <string name="review_start">开始分析</string>
+    <string name="review_rerecord">重录</string>
+    <string name="review_reselect">重新选择</string>
+    <string name="review_missing_video">视频文件不存在，请重新录制或选择</string>
+
+    <!-- 分析页 -->
+    <string name="analysis_title">分析</string>
+    <string name="analysis_uploading">正在上传…</string>
+    <string name="analysis_upload_percent">%1$d%%</string>
+    <string name="analysis_upload_detail">%1$s / %2$s</string>
+    <string name="analysis_queued">已上传，等待分析</string>
+    <string name="analysis_processing">正在识别进球…</string>
+    <string name="analysis_hint_leave">识别在服务端进行，可以先离开，稍后到记录里查看。</string>
+    <string name="analysis_hint_network">视频越长，分析时间越久，请保持网络畅通。</string>
+    <string name="analysis_elapsed">已等待 %1$s</string>
+    <string name="analysis_network_retry">网络中断，正在重试…</string>
+    <string name="analysis_timeout_title">分析时间超出预期</string>
+    <string name="analysis_timeout_message">可以继续等待，或重新上传这段视频再分析一次。</string>
+    <string name="analysis_cancel_upload">取消上传</string>
+    <string name="analysis_continue_wait">继续等待</string>
+    <string name="analysis_leave_title">离开分析页？</string>
+    <string name="analysis_leave_message">分析会在后台继续，可在记录中查看。</string>
+    <string name="analysis_leave_confirm">离开</string>
+    <string name="analysis_cancel_title">取消上传？</string>
+    <string name="analysis_cancel_message">已上传的进度会丢失，视频会保留。</string>
+    <string name="analysis_upload_interrupted">上传中断，请检查网络后重试</string>
+    <string name="analysis_retry">重新分析</string>
+    <string name="analysis_not_found">找不到这条分析记录</string>
+    <string name="analysis_opening_result">分析完成，正在打开结果…</string>
+
+    <!-- 结果页 -->
+    <string name="result_title">分析结果</string>
+    <string name="result_summary">识别到 %1$d 次投篮 · 命中 %2$d · %3$d%%</string>
+    <string name="result_empty_title">没有识别到投篮</string>
+    <string name="result_empty_suggestions">可以试试以下拍摄建议：</string>
+    <string name="result_tip_1">尽量让篮筐和篮球同时出现在画面中</string>
+    <string name="result_tip_2">保持机位稳定，避免强烈逆光</string>
+    <string name="result_tip_3">视频从投篮前开始，到球落下后结束</string>
+    <string name="result_note">提示：%1$s</string>
+    <string name="result_disclaimer">识别结果可能有误，命中率仅供参考</string>
+    <string name="result_made">命中</string>
+    <string name="result_missed">未中</string>
+    <string name="result_shot_number">第 %1$d 球</string>
+    <string name="result_shot_time">%1$s</string>
+    <string name="result_video_cleaned">视频已清理</string>
+    <string name="result_expired_snapshot">服务端任务已失效，以下为本地结果快照</string>
+    <string name="result_expired_no_snapshot">这次分析结果已不可用</string>
+    <string name="result_failed">分析失败</string>
+    <string name="result_failed_detail">分析失败：%1$s</string>
+    <string name="result_analyze_again">再分析一次</string>
+    <string name="result_open_analysis">查看分析进度</string>
+    <string name="result_not_found">找不到这条分析记录</string>
+    <string name="result_timeline">进球时间轴</string>
+    <string name="result_events_title">投篮事件</string>
+
+    <!-- 记录页 -->
+    <string name="history_title">记录</string>
+    <string name="history_empty">还没有分析记录，去录制第一段视频吧</string>
+    <string name="history_empty_action">开始分析</string>
+    <string name="history_delete_title">删除这条记录？</string>
+    <string name="history_delete_message">本地视频副本也会被删除，相册原文件不受影响。</string>
+    <string name="history_deleted">记录已删除</string>
+    <string name="history_status_uploading">上传中</string>
+    <string name="history_status_upload_interrupted">上传中断</string>
+    <string name="history_status_queued">排队中</string>
+    <string name="history_status_processing">识别中</string>
+    <string name="history_status_completed">已完成</string>
+    <string name="history_status_failed">失败</string>
+    <string name="history_status_expired">已失效</string>
+    <string name="history_summary_completed">识别 %1$d 球 · 命中 %2$d</string>
+    <string name="history_summary_uploading">正在上传视频…</string>
+    <string name="history_summary_upload_interrupted">上传中断，点击重试</string>
+    <string name="history_summary_queued">已上传，等待分析</string>
+    <string name="history_summary_processing">正在识别进球…</string>
+    <string name="history_summary_failed">分析失败，点击查看</string>
+    <string name="history_summary_expired">任务已失效，点击查看</string>
+    <string name="history_long_press_delete">长按可删除记录</string>
+
+    <!-- 开发者设置 -->
+    <string name="dev_title">开发者设置</string>
+    <string name="dev_server_url">服务端地址</string>
+    <string name="dev_server_url_hint">http://10.0.2.2:8000</string>
+    <string name="dev_reset">恢复默认</string>
+    <string name="dev_invalid_url">请输入以 http:// 或 https:// 开头的地址</string>
+    <string name="dev_health">连接状态</string>
+    <string name="dev_health_checking">检查中…</string>
+    <string name="dev_health_online">在线 · 服务端 %1$s · 检测器 %2$s</string>
+    <string name="dev_health_offline">连接失败：%1$s</string>
+    <string name="dev_saved">服务端地址已保存</string>
+    <string name="dev_note">此入口仅用于开发调试，普通用户请使用默认地址。</string>
+
+    <!-- 错误 -->
+    <string name="error_network">网络连接失败，请检查网络后重试</string>
+    <string name="error_upload_interrupted">上传中断，请检查网络后重试</string>
+    <string name="error_too_large">视频超过服务端大小限制</string>
+    <string name="error_unsupported_format">服务端不支持该视频格式</string>
+    <string name="error_server">服务暂时不可用，请稍后重试</string>
+    <string name="error_expired">这次分析结果已不可用</string>
+    <string name="error_analysis_failed">分析失败</string>
+    <string name="error_timeout">分析时间超出预期</string>
+    <string name="error_video_missing">本地视频已丢失，请重新录制或选择</string>
+    <string name="error_unknown">发生未知错误，请重试</string>
+    <string name="error_with_detail">%1$s：%2$s</string>
+    <string name="error_generic_detail">%1$s</string>
 </resources>
