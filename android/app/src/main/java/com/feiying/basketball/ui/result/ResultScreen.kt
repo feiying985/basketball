@@ -137,8 +137,7 @@ fun ResultRoute(
                     record = current,
                     onBack = { navController.popBackStack() },
                     onReanalyze = {
-                        retrying = true
-                        container.repository.retry(current.localId)
+                        navController.popBackStack(Routes.HOME, inclusive = false)
                     },
                     onDone = { navController.popBackStack() },
                 )
