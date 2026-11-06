@@ -27,7 +27,7 @@
 - 使用 Python 标准库 `sqlite3`，不新增依赖；数据库默认开启 WAL 模式。
 - 数据库文件由 `BASKETBALL_DB_PATH` 指定，默认
   `<系统临时目录>/basketball-data/basketball.db`。生产环境建议放到持久化目录，例如
-  `/var/lib/basketball/basketball.db`。
+  `/var/lib/basketball/data/basketball.db`。
 - 每次操作打开一个连接，进程内用锁串行化写入；适合单进程 MVP。
 
 `jobs` 表：
