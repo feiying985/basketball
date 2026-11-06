@@ -2,13 +2,15 @@
 
 安卓端 + 服务端 monorepo，目标是把「打篮球 → 录制视频 → 自动识别进球」做成可用的 MVP。
 
-> **当前状态：App 端 MVP 主流程已实现，服务端已接入经典 CV 进球识别基线、任务持久化与账号体系。**
-> 安卓端支持录制/相册选择、视频校验、上传与轮询、结果页和本地历史记录；
+> **当前状态：App 端 MVP 主流程已实现，服务端已接入经典 CV 进球识别基线、任务持久化、账号体系与进球片段剪辑。**
+> 安卓端支持录制/相册选择、视频校验、上传与轮询、结果页、进球片段播放/保存和本地历史记录；
 > 服务端基于 OpenCV 做颜色检测 + 轨迹 + 穿筐判定，无需模型文件即可运行；
+> 分析完成后用系统 ffmpeg 为每个命中球生成前后 5 秒的 MP4；
 > 分析任务和账号保存到 SQLite，重启不丢结果，并支持注册/登录与任务归属
 > （默认不强制登录，现有 App 无需改动）。
 > GitHub 现成方案调研见 [docs/research/shot-recognition.md](docs/research/shot-recognition.md)，
 > 算法与限制见 [docs/shot-detection.md](docs/shot-detection.md)，
+> 进球片段设计见 [docs/shot-clips.md](docs/shot-clips.md)，
 > 持久化与账号设计见 [docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)。
 
 ## 目录结构
@@ -30,6 +32,7 @@
 │   ├── research/             # 进球识别方案调研
 │   ├── design/               # App 交互流程设计
 │   ├── shot-detection.md     # 算法与限制说明
+│   ├── shot-clips.md         # 进球片段生成与 App 播放
 │   ├── server-persistence-accounts.md  # 任务持久化与账号体系
 │   └── deployment-verification.md  # 部署与验证指引
 └── .github/workflows/        # 服务端测试 + 安卓构建 CI
@@ -70,6 +73,8 @@ MVP 先做**服务端离线分析**：App 只负责采集/上传，识别逻辑�
 - 上传上限与服务端一致（200 MB），显示真实字节进度，可取消；
 - 确认视频时可以**手动圈定篮筐**：拖动框选画面中的篮筐开口，坐标随上传一起提交，
   用于自动检测找错篮筐或篮筐不是橙色的场景；不圈定则继续使用自动识别；
+- 结果页在命中事件旁显示「片段」，顶部提供「进球片段」卡片；点击进入播放页，
+  可**保存到相册**（Android 10+ 无需存储权限，Android 8-9 首次保存时申请）；
 - 本地历史使用 Room 保存结果快照，服务端重启后仍可回看；
 - 服务端地址默认由 `build.gradle.kts` 配置。真机调试需要改地址时，在首页**长按服务状态**打开开发者设置，
   普通用户看不到该入口。
@@ -106,20 +111,25 @@ cd android
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/api/v1/health` | 健康检查，返回服务版本与当前检测器名称 |
+| `GET` | `/api/v1/health` | 健康检查，返回服务版本、当前检测器名称与 `clips`（ffmpeg 是否可用） |
 | `POST` | `/api/v1/analyses` | 上传视频（multipart 字段 `file`），可选 `hoop_roi=x,y,w,h` 手动指定篮筐，创建分析任务，返回 `202` |
 | `GET` | `/api/v1/analyses` | 当前用户的任务列表（需要登录） |
-| `GET` | `/api/v1/analyses/{id}` | 查询任务状态与识别结果 |
+| `GET` | `/api/v1/analyses/{id}` | 查询任务状态、处理阶段与识别结果 |
+| `GET` | `/api/v1/analyses/{id}/clips/{index}` | 播放/下载一个进球片段；支持 HTTP Range（ExoPlayer 可拖动） |
 | `POST` | `/api/v1/auth/register` | 注册并返回 Bearer token |
 | `POST` | `/api/v1/auth/login` | 登录并返回 Bearer token |
 | `GET` | `/api/v1/auth/me` | 当前登录用户 |
 | `POST` | `/api/v1/auth/logout` | 吊销当前 token |
 
 任务状态：`queued → processing → completed / failed`。
+处理期间 `stage` 为 `detecting`（识别中）或 `clipping`（生成片段中），任务结束时为空。
 
 分析完成后 `result.shots` 返回识别到的投篮事件（`made=true` 为命中，
 `timestamp_seconds`/`frame_index` 指向球穿过篮筐附近的时刻）。
+命中事件还会带 `clip`：`ready` 表示片段已生成并可播放，`failed` 带 `error`；数组顺序按
+`timestamp_seconds` 升序，片段接口的 `index` 就是这个数组下标。
 `result.note` 在未检测到篮筐、篮球或投篮时说明原因。
+`result.clip_note` 在服务端未安装/未启用 ffmpeg 时说明整体未生成片段。
 `result.hoop_confidence` 是自动找筐的置信度（0-1，手动圈筐时为 1）：几个橙色候选
 得分接近时它会变低，此时服务端不猜测，直接提示手动圈定篮筐，避免把灯柱/海报当成篮筐
 后返回错误事件。
@@ -171,6 +181,15 @@ GET  /api/v1/analyses       →  当前账号的历史任务
 | `BASKETBALL_DB_PATH` | `<临时目录>/basketball-data/basketball.db` | SQLite 数据库文件；生产建议持久化目录 |
 | `BASKETBALL_REQUIRE_AUTH` | `false` | `true` 时分析相关接口都要求 Bearer token |
 | `BASKETBALL_TOKEN_TTL_DAYS` | `30` | 登录 token 有效天数；`0` 表示不过期 |
+| `BASKETBALL_CLIP_ENABLED` | `true` | 关闭后不生成进球片段，识别任务照常完成 |
+| `BASKETBALL_CLIP_PRE_SECONDS` / `BASKETBALL_CLIP_POST_SECONDS` | `5` / `5` | 进球前后各截取的秒数（0-30） |
+| `BASKETBALL_CLIP_DIR` | `<upload_dir>/clips` | 片段保存目录 |
+| `BASKETBALL_FFMPEG_PATH` | `ffmpeg` | ffmpeg 可执行文件路径；启动时探测，缺失时 `health.clips=false` |
+| `BASKETBALL_CLIP_INCLUDE_MISSES` | `false` | 是否也给未中事件生成片段（默认只剪命中） |
+| `BASKETBALL_CLIP_MAX_PER_JOB` | `50` | 单任务最多生成片段数 |
+| `BASKETBALL_CLIP_TIMEOUT_SECONDS` | `120` | 单个片段生成超时 |
+
+片段生成细节、存储与清理见 [docs/shot-clips.md](docs/shot-clips.md)。
 
 例如白色篮筐的球场：
 
