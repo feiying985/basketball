@@ -29,6 +29,13 @@ class FormattersTest {
     }
 
     @Test
+    fun `clip duration uses one decimal`() {
+        assertEquals("10.0s", Formatters.clipDuration(10.0))
+        assertEquals("9.5s", Formatters.clipDuration(9.46))
+        assertEquals("0.0s", Formatters.clipDuration(-1.0))
+    }
+
+    @Test
     fun `file size uses readable units`() {
         assertEquals("512 B", Formatters.fileSize(512))
         assertEquals("1.5 KB", Formatters.fileSize(1536))

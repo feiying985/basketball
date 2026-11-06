@@ -125,6 +125,7 @@
     <string name="analysis_upload_detail">%1$s / %2$s</string>
     <string name="analysis_queued">已上传，等待分析</string>
     <string name="analysis_processing">正在识别进球…</string>
+    <string name="analysis_clipping">正在生成进球片段…</string>
     <string name="analysis_hint_leave">识别在服务端进行，可以先离开，稍后到记录里查看。</string>
     <string name="analysis_hint_network">视频越长，分析时间越久，请保持网络畅通。</string>
     <string name="analysis_elapsed">已等待 %1$s</string>
@@ -167,6 +168,30 @@
     <string name="result_not_found">找不到这条分析记录</string>
     <string name="result_timeline">进球时间轴</string>
     <string name="result_events_title">投篮事件</string>
+    <string name="result_clips_title">进球片段 %1$d</string>
+    <string name="result_clip_open">片段</string>
+    <string name="result_clip_duration">%1$s</string>
+    <string name="result_clips_empty">本次分析未生成进球片段</string>
+    <string name="result_clips_note">片段提示：%1$s</string>
+
+    <!-- 进球片段播放 -->
+    <string name="clip_page_title">进球片段</string>
+    <string name="clip_title">第 %1$d 球 · %2$s</string>
+    <string name="clip_range">片段 %1$s–%2$s</string>
+    <string name="clip_hint">片段保存在服务端，播放需要联网；保存后可在相册的 Movies/Basketball 中查看。</string>
+    <string name="clip_save_to_album">保存到相册</string>
+    <string name="clip_save_title">保存片段</string>
+    <string name="clip_downloading">正在下载片段…</string>
+    <string name="clip_downloading_percent">正在下载片段 %1$d%%</string>
+    <string name="clip_saving">正在保存到相册…</string>
+    <string name="clip_saved">已保存到相册</string>
+    <string name="clip_save_failed">保存失败，请重试</string>
+    <string name="clip_download_failed">下载片段失败，请检查网络</string>
+    <string name="clip_permission_denied">需要存储权限才能保存到相册</string>
+    <string name="clip_not_found">找不到这个片段</string>
+    <string name="clip_not_ready">片段尚未生成</string>
+    <string name="clip_load_failed">片段加载失败，请检查网络</string>
+    <string name="clip_expired">片段已失效，可重新分析</string>
 
     <!-- 记录页 -->
     <string name="history_title">记录</string>
@@ -183,6 +208,7 @@
     <string name="history_status_failed">失败</string>
     <string name="history_status_expired">已失效</string>
     <string name="history_summary_completed">识别 %1$d 球 · 命中 %2$d</string>
+    <string name="history_summary_completed_with_clips">识别 %1$d 球 · 命中 %2$d · %3$d 个片段</string>
     <string name="history_summary_uploading">正在上传视频…</string>
     <string name="history_summary_upload_interrupted">上传中断，点击重试</string>
     <string name="history_summary_queued">已上传，等待分析</string>

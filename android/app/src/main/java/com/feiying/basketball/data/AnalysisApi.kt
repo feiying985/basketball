@@ -6,6 +6,8 @@ import java.net.HttpURLConnection
 import java.util.concurrent.TimeUnit
 import com.feiying.basketball.domain.HoopRoi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -41,6 +43,11 @@ class AnalysisApi(
 ) {
     private val pollClient: OkHttpClient = client.newBuilder()
         .callTimeout(10, TimeUnit.SECONDS)
+        .build()
+
+    private val downloadClient: OkHttpClient = client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(2, TimeUnit.MINUTES)
         .build()
 
     suspend fun health(): HealthInfo = withContext(Dispatchers.IO) {
@@ -110,6 +117,62 @@ class AnalysisApi(
                 else -> throw ApiException(response.code, "查询任务失败", errorDetail(body))
             }
         }
+    }
+
+    suspend fun clipUrl(jobId: String, index: Int): String =
+        "${baseUrl()}/api/v1/analyses/$jobId/clips/$index"
+
+    /**
+     * Downloads one clip to [destination].  Progress is reported with the total
+     * byte count when the server provides ``Content-Length``.
+     */
+    suspend fun downloadClip(
+        jobId: String,
+        index: Int,
+        destination: File,
+        onProgress: (bytesReceived: Long, totalBytes: Long?) -> Unit,
+    ): File = withContext(Dispatchers.IO) {
+        destination.parentFile?.mkdirs()
+        val request = Request.Builder()
+            .url("${baseUrl()}/api/v1/analyses/$jobId/clips/$index")
+            .get()
+            .build()
+        execute(downloadClient, request).use { response ->
+            if (!response.isSuccessful) {
+                val body = response.body?.string().orEmpty()
+                throw ApiException(
+                    statusCode = response.code,
+                    message = when (response.code) {
+                        HttpURLConnection.HTTP_NOT_FOUND -> "片段已失效"
+                        HttpURLConnection.HTTP_CONFLICT -> "片段尚未生成"
+                        else -> "下载片段失败"
+                    },
+                    detail = errorDetail(body),
+                )
+            }
+            val body = response.body ?: throw ApiException(500, "下载片段失败")
+            val total = body.contentLength().takeIf { it > 0 }
+            try {
+                destination.outputStream().use { output ->
+                    body.byteStream().use { input ->
+                        val buffer = ByteArray(64 * 1024)
+                        var received = 0L
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val read = input.read(buffer)
+                            if (read == -1) break
+                            output.write(buffer, 0, read)
+                            received += read
+                            onProgress(received, total)
+                        }
+                    }
+                }
+            } catch (error: Throwable) {
+                destination.delete()
+                throw error
+            }
+        }
+        destination
     }
 
     private suspend fun baseUrl(): String = baseUrlProvider().trimEnd('/')

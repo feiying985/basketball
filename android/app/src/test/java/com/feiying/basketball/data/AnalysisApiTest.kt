@@ -6,7 +6,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okio.Buffer
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -136,6 +138,66 @@ class AnalysisApiTest {
         val health = api().health()
         assertEquals("0.1.0", health.version)
         assertEquals("stub", health.detector)
+    }
+
+    @Test
+    fun `clip url points at the job clip endpoint`() = runBlocking {
+        val base = server.url("/").toString().trimEnd('/')
+
+        assertEquals(
+            "$base/api/v1/analyses/job-1/clips/2",
+            api().clipUrl("job-1", 2),
+        )
+    }
+
+    @Test
+    fun `download clip writes the body and reports progress`() = runBlocking {
+        val payload = ByteArray(200_000) { (it % 251).toByte() }
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "video/mp4")
+                .setBody(Buffer().write(payload)),
+        )
+        val destination = File.createTempFile("clip", ".mp4").apply {
+            delete()
+            deleteOnExit()
+        }
+        var received = 0L
+        var total: Long? = null
+
+        api().downloadClip("job-1", 1, destination) { bytes, totalBytes ->
+            received = bytes
+            total = totalBytes
+        }
+
+        assertArrayEquals(payload, destination.readBytes())
+        assertEquals(payload.size.toLong(), received)
+        assertEquals(payload.size.toLong(), total)
+        val request = server.takeRequest()
+        assertEquals("/api/v1/analyses/job-1/clips/1", request.path)
+        assertEquals("GET", request.method)
+    }
+
+    @Test
+    fun `download clip maps 404 to an ApiException`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setBody("""{"detail":"片段文件已清理"}"""),
+        )
+        try {
+            api().downloadClip(
+                "job-1",
+                0,
+                File.createTempFile("clip", ".mp4").apply { delete() },
+            ) { _, _ -> }
+            fail("expected ApiException")
+        } catch (error: ApiException) {
+            assertEquals(404, error.statusCode)
+            assertEquals("片段已失效", error.message)
+            assertEquals("片段文件已清理", error.detail)
+        }
     }
 
     private fun api(): AnalysisApi = AnalysisApi(

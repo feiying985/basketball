@@ -7,9 +7,11 @@ import com.feiying.basketball.domain.AnalysisError
 import com.feiying.basketball.domain.AnalysisRecord
 import com.feiying.basketball.domain.AnalysisResult
 import com.feiying.basketball.domain.AnalysisStatus
+import com.feiying.basketball.domain.ClipStatus
 import com.feiying.basketball.domain.HoopRoi
 import com.feiying.basketball.domain.PollingPolicy
 import com.feiying.basketball.domain.SelectedVideo
+import com.feiying.basketball.domain.ShotClip
 import com.feiying.basketball.domain.ShotEvent
 import com.feiying.basketball.domain.VideoSource
 import java.io.File
@@ -48,6 +50,7 @@ data class ActiveAnalysis(
     val totalBytes: Long = 0,
     val elapsedMs: Long = 0,
     val timedOut: Boolean = false,
+    val stage: String? = null,
 ) {
     val progress: Float?
         get() = if (totalBytes > 0) (bytesSent.toFloat() / totalBytes).coerceIn(0f, 1f) else null
@@ -203,6 +206,15 @@ class AnalysisRepository(
 
     suspend fun currentBaseUrl(): String = settingsStore.baseUrl.first()
 
+    suspend fun clipUrl(jobId: String, index: Int): String = api.clipUrl(jobId, index)
+
+    suspend fun downloadClip(
+        jobId: String,
+        index: Int,
+        destination: File,
+        onProgress: (bytesReceived: Long, totalBytes: Long?) -> Unit,
+    ): File = api.downloadClip(jobId, index, destination, onProgress)
+
     suspend fun setBaseUrl(url: String) {
         settingsStore.setBaseUrl(url)
         checkHealth()
@@ -292,7 +304,15 @@ class AnalysisRepository(
 
                     "processing" -> {
                         dao.updateStatus(recordId, AnalysisStatus.PROCESSING.name, now())
-                        setActive(recordId, progressState(recordId, ActivePhase.PROCESSING, elapsed))
+                        setActive(
+                            recordId,
+                            progressState(
+                                recordId,
+                                ActivePhase.PROCESSING,
+                                elapsed,
+                                stage = dto.stage,
+                            ),
+                        )
                     }
 
                     "completed" -> {
@@ -358,7 +378,12 @@ class AnalysisRepository(
         }
     }
 
-    private fun progressState(recordId: String, phase: ActivePhase, elapsed: Long): ActiveAnalysis {
+    private fun progressState(
+        recordId: String,
+        phase: ActivePhase,
+        elapsed: Long,
+        stage: String? = null,
+    ): ActiveAnalysis {
         val current = _active.value[recordId]
         val timedOut = PollingPolicy.isOverTotalTimeout(elapsed) &&
             recordId !in timeoutAcknowledged
@@ -368,6 +393,7 @@ class AnalysisRepository(
             totalBytes = current?.totalBytes ?: 0,
             elapsedMs = elapsed,
             timedOut = timedOut,
+            stage = stage ?: current?.stage,
         )
     }
 
@@ -448,7 +474,29 @@ class AnalysisRepository(
 
     private fun AnalysisResultDto.toDomain(): AnalysisResult = AnalysisResult(
         detector = detector,
-        shots = shots.map { ShotEvent(it.timestampSeconds, it.frameIndex, it.made) },
+        shots = shots.map {
+            ShotEvent(
+                timestampSeconds = it.timestampSeconds,
+                frameIndex = it.frameIndex,
+                made = it.made,
+                clip = it.clip?.toDomain(),
+            )
+        },
         note = note,
+        clipNote = clipNote,
+    )
+
+    private fun ShotClipDto.toDomain(): ShotClip = ShotClip(
+        status = when (status.lowercase()) {
+            "ready" -> ClipStatus.READY
+            "failed" -> ClipStatus.FAILED
+            else -> ClipStatus.UNKNOWN
+        },
+        startSeconds = startSeconds,
+        endSeconds = endSeconds,
+        durationSeconds = durationSeconds,
+        sizeBytes = sizeBytes,
+        url = url,
+        error = error,
     )
 }

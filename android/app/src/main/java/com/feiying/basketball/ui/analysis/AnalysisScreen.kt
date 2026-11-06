@@ -389,10 +389,12 @@ private fun StatusIcon(status: AnalysisStatus) {
 private fun statusTitle(record: AnalysisRecord, active: ActiveAnalysis?): String = when (record.status) {
     AnalysisStatus.UPLOADING -> stringResource(R.string.analysis_uploading)
     AnalysisStatus.QUEUED -> stringResource(R.string.analysis_queued)
-    AnalysisStatus.PROCESSING -> if (active?.phase == ActivePhase.NETWORK_RETRY) {
-        stringResource(R.string.analysis_network_retry)
-    } else {
-        stringResource(R.string.analysis_processing)
+    AnalysisStatus.PROCESSING -> when {
+        active?.phase == ActivePhase.NETWORK_RETRY ->
+            stringResource(R.string.analysis_network_retry)
+
+        active?.stage == "clipping" -> stringResource(R.string.analysis_clipping)
+        else -> stringResource(R.string.analysis_processing)
     }
 
     AnalysisStatus.UPLOAD_INTERRUPTED -> stringResource(R.string.analysis_upload_interrupted)

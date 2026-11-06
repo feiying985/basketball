@@ -38,7 +38,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.compose.ui.viewinterop.AndroidView
 import com.feiying.basketball.R
@@ -99,12 +101,19 @@ fun VideoPlayer(
     uri: Uri,
     modifier: Modifier = Modifier,
     showController: Boolean = true,
+    headers: Map<String, String> = emptyMap(),
     onPlayerReady: ((ExoPlayer) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val player = remember(uri) {
-        ExoPlayer.Builder(context).build().apply {
+    val player = remember(uri, headers) {
+        val builder = ExoPlayer.Builder(context)
+        if (headers.isNotEmpty()) {
+            val dataSourceFactory = DefaultHttpDataSource.Factory()
+                .setDefaultRequestProperties(headers)
+            builder.setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+        }
+        builder.build().apply {
             setMediaItem(MediaItem.fromUri(uri))
             prepare()
         }
