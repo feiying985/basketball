@@ -1,24 +1,24 @@
 # 后端部署与进球识别验证指引
 
-> - **适用代码**：`server` 0.2.0（包含经典 CV 检测器，见 PR #2）；安卓端为 `main` 上的 App MVP。
+> - **适用代码**：`server` 0.3.0（经典 CV 检测器 + SQLite 任务持久化 + 账号体系）；安卓端为 `main` 上的 App MVP。
 > - **更新日期**：2026-11-06
 > - **目标环境**：阿里云 ECS（Ubuntu 24.04 LTS，2 vCPU / 2 GB 起）
 > - **文档定位**：把「部署后端 → 验证接口 → 验证进球识别 → 用 App 走通全流程」串成一次可执行的验收；同时说明当前完成度和还缺的功能。
+> - **0.3.0 变更**：任务状态与结果写入 SQLite（重启不丢），新增注册/登录/Bearer token 与任务归属。
+>   默认 `BASKETBALL_REQUIRE_AUTH=false`，现有 App 不需要改；设计与接口见
+>   [server-persistence-accounts.md](server-persistence-accounts.md)。
 
 ## 0. 先回答两个问题
 
 ### 0.1 现在可以验证进球识别了吗？
 
-**可以，但需要先让服务端跑到带检测器的版本。**
+**可以。`main` 已包含经典 CV 检测器（PR #2 已合入）。**
 
-- `main` 分支上的检测器仍是占位实现：任务会正常完成，但 `result.shots` 为空，并带 `note`
-  说明「占位检测器」。用它只能验证上传/轮询链路，**不能验证识别效果**。
-- 真正的经典 CV 检测器在 **PR #2**（`feat: 实现服务端经典 CV 进球识别`）。该 PR 已实现，
-  服务端测试与安卓构建 CI 均通过；截至本文更新时，与 `main` 的 README 冲突已解决，等待人工合入。
-  如果你阅读时 PR #2 已经合入，直接按 `main` 部署即可。
-- 因此有两条路：
-  1. **推荐**：先合入 PR #2，再按本文部署 `main`；
-  2. 不想等合入：按 [附录 A](#附录-a不合并-main-也能验证) 直接部署 PR #2 的代码。
+- 0.3.0 默认 `BASKETBALL_DETECTOR=classical`，任务完成时会返回 `result.shots`；
+- 部署后先确认 `GET /api/v1/health` 返回 `version=0.3.0`、`detector=classical`。如果
+  `detector` 是 `stub` 或版本更旧，说明代码不是最新 `main`，先 `git pull` 再重启；
+- 仍想复现 PR #2 合入前的行为时，可检出对应历史提交；[附录 A](#附录-a不合并-main-也能验证)
+  保留为历史说明，正常部署不再需要。
 
 **验证的边界**：你能验证「视频上传 → 后台分析 → 返回投篮事件 → App 展示」这条链路，以及
 经典 CV 基线在你场地上的大致效果；**不能**把结果当作最终准确率。当前没有真实场地评估集，
@@ -31,31 +31,33 @@
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
 | 服务端 API（健康检查 / 上传 / 轮询） | ✅ 已完成 | `main` 可用 |
-| 经典 CV 进球识别 | 🟡 待合入 | PR #2；服务端测试与安卓 CI 通过，冲突已解决，等待人工合入 |
+| 经典 CV 进球识别 | ✅ 已完成 | PR #2 已合入 `main` |
 | 安卓 App 主流程（录制/相册、校验、上传、轮询、结果、本地历史） | ✅ 已完成 | PR #4、PR #5 已合入 `main` |
-| 安卓端交互流程设计稿 | 🟡 待合入 | PR #3，设计文档，不影响本次部署验证 |
+| 安卓端交互流程设计稿 | 🟡 待合入 | PR #3，README 冲突已解决，设计文档，不影响本次部署验证 |
 | 真实场地准确率评估与调参 | ❌ 未做 | 需要真实视频样本；当前只有合成视频测试 |
 | 结果人工纠正（命中/未中） | ❌ 未做 | 设计里放在 P1 |
-| 服务端任务持久化 / 队列 | ❌ 未做 | 任务存在进程内存，重启即丢失；只能单进程 |
-| 鉴权 / 限流 / 上传文件清理 | ❌ 未做 | 公网暴露前需要额外保护；上传文件目前不自动删除 |
-| 账号体系 / 云端历史 / 多设备同步 | ❌ 未做 | 目前只有 App 本地 Room 历史 |
+| 服务端任务持久化 | ✅ 已完成 | 0.3.0 使用 SQLite，重启后已完成任务仍可查询 |
+| 任务队列 / 断点续跑 | ❌ 未做 | 分析仍是进程内任务；重启时未完成任务标记为 `failed` |
+| 账号体系（注册/登录/token/任务归属） | 🟡 服务端已完成 | 0.3.0 已提供接口；App 登录与云端历史未接入 |
+| 限流 / HTTPS / 上传文件清理 | ❌ 未做 | 公网长期运行前需要补；上传文件目前不自动删除 |
+| 云端历史 / 多设备同步 | ❌ 未做 | 服务端已有任务列表接口，App 仍只有本地 Room 历史 |
 | 端侧实时识别 | ❌ 未做 | 规划在第二阶段（TFLite / NCNN） |
 | 分享、多人/多球统计 | ❌ 未做 | 当前不在 MVP 范围 |
 
 按优先级展开：
 
 - **P0（让这次验证真正有意义）**
-  1. 合入 PR #2，让服务端默认检测器变成 `classical`；
+  1. 确认部署的是 `main` 0.3.0（健康检查 `version=0.3.0`、`detector=classical`）；
   2. 用真实球场视频跑一批样本，记录「实际命中 vs 识别命中」，作为第一版评估集。
 - **P1（让 MVP 可日常使用）**
   1. 结果人工纠正（本地覆盖 `made`，不写回服务端）；
-  2. 任务持久化/队列（重启不丢任务）、上传文件过期清理；
-  3. 鉴权/限流、HTTPS 域名；
-  4. App 后台完成通知、断点续传、普通用户可见的设置页。
+  2. 可持久化的任务队列（重启后续跑）、上传文件过期清理；
+  3. App 接入注册/登录与 token 存储，打开 `BASKETBALL_REQUIRE_AUTH`；
+  4. 登录限流、HTTPS 域名、App 后台完成通知、断点续传。
 - **P2（产品化）**
   1. 学习型检测器（YOLO/RT-DETR + ByteTrack，注意许可证）；
   2. 端侧实时识别；
-  3. 账号、云端历史、分享、多人统计。
+  3. 云端历史同步、分享、多人统计。
 
 ---
 
@@ -73,17 +75,18 @@ uvicorn（127.0.0.1:8000，单进程）
   ▼
 FastAPI + OpenCV 经典 CV 检测器
   │
-  ├── 任务状态：进程内存（重启丢失）
+  ├── 任务/账号：SQLite /var/lib/basketball/data/basketball.db（重启保留）
   └── 上传视频：/var/lib/basketball/uploads（不自动删除）
 ```
 
 部署前必须知道的三条约束：
 
-1. **只能跑单进程**。任务状态存在进程内存（`server/app/services/jobs.py`），后台分析用
-   FastAPI `BackgroundTasks` 在同一个进程内执行。`uvicorn --workers` 必须为 `1`，
-   也不要在这台机器前面做多实例负载均衡；否则上传和轮询可能落到不同进程，出现「任务不存在」。
-2. **没有鉴权**。任何能访问公网 IP 的人都可以上传视频、消耗 CPU。验证期间请尽量用安全组
-   限制来源 IP；长期使用前必须加鉴权或放在内网。
+1. **仍建议单进程**。任务和账号已持久化到 SQLite，但后台分析仍用 FastAPI `BackgroundTasks`
+   在 API 进程内执行，没有持久队列和重试。`uvicorn --workers` 先保持 `1`；需要多实例时先换
+   任务队列（Celery/RQ + Redis 或 PostgreSQL），不要只调 worker 数。
+2. **默认没有强制鉴权**。0.3.0 已提供账号与 Bearer token，但 `BASKETBALL_REQUIRE_AUTH`
+   默认为 `false`，以便现有 App 不改代码即可使用。验证期间请用安全组限制来源 IP；接好 App
+   登录后把该变量设为 `true`，并在 Nginx/应用层补登录限流。
 3. **上传文件不会自动删除**。每次分析都会在 `BASKETBALL_UPLOAD_DIR` 留一份原视频；
    长时间运行前请按 [5.7 节](#57-清理上传文件可选) 配置定期清理。
 
@@ -162,22 +165,19 @@ OpenCV 使用的是 `opencv-python-headless`，不需要 `libgl1` 等图形库�
 
 ```bash
 sudo useradd --system --create-home --shell /usr/sbin/nologin basketball
-sudo mkdir -p /opt/basketball /var/lib/basketball/uploads
+sudo mkdir -p /opt/basketball /var/lib/basketball/uploads /var/lib/basketball/data
 sudo chown -R basketball:basketball /opt/basketball /var/lib/basketball
 ```
 
 ### 4.2 克隆代码
 
-**如果 PR #2 已经合入 `main`：**
-
 ```bash
 sudo -u basketball git clone https://github.com/feiying985/basketball.git /opt/basketball/app
 cd /opt/basketball/app
 git log --oneline -3
-ls server/app/services/classical_shot_detection.py   # 存在才说明包含检测器
+ls server/app/services/classical_shot_detection.py   # 经典 CV 检测器
+ls server/app/services/db.py                         # 0.3.0 SQLite 持久化
 ```
-
-**如果 PR #2 还没合入：** 按 [附录 A](#附录-a不合并-main-也能验证) 换成 PR 分支。
 
 ### 4.3 创建虚拟环境并安装依赖
 
@@ -200,10 +200,14 @@ sudo -u basketball .venv/bin/pip install -r requirements.txt
 ```bash
 sudo tee /etc/basketball.env >/dev/null <<'EOF'
 BASKETBALL_UPLOAD_DIR=/var/lib/basketball/uploads
+BASKETBALL_DB_PATH=/var/lib/basketball/data/basketball.db
 BASKETBALL_MAX_UPLOAD_BYTES=209715200
 BASKETBALL_DETECTOR=classical
 BASKETBALL_SAMPLE_FPS=10
 BASKETBALL_SHOT_COOLDOWN_SECONDS=1.5
+# App 接入登录前保持 false；接入后改为 true 强制鉴权
+BASKETBALL_REQUIRE_AUTH=false
+BASKETBALL_TOKEN_TTL_DAYS=30
 # 白色/非橙色篮筐时取消下一行注释，并改成你的篮筐区域
 # BASKETBALL_HOOP_ROI=0.42,0.25,0.16,0.05
 EOF
@@ -252,10 +256,10 @@ curl -s http://127.0.0.1:8000/api/v1/health
 应该返回：
 
 ```json
-{"status":"ok","service":"basketball-server","version":"0.2.0","detector":"classical"}
+{"status":"ok","service":"basketball-server","version":"0.3.0","detector":"classical"}
 ```
 
-- `version` 是 `0.1.0` 或 `detector` 是 `stub`：说明部署的代码不包含 PR #2，见第 10 节。
+- `version` 低于 `0.3.0` 或 `detector` 是 `stub`：说明部署的不是最新 `main`，先 `git pull` 再重启，见第 10 节。
 - 如果启动失败，看日志：`sudo journalctl -u basketball -n 100 --no-pager`。
 
 ### 5.3 Nginx 反向代理
@@ -366,7 +370,7 @@ curl -s http://<SERVER>/api/v1/health | jq .
 {
   "status": "ok",
   "service": "basketball-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "detector": "classical"
 }
 ```
@@ -455,15 +459,18 @@ truncate -s 210M big.mp4
 curl -s -o /dev/null -w '%{http_code}\n' -F "file=@big.mp4;type=video/mp4" http://<SERVER>/api/v1/analyses
 ```
 
-### 6.5 重启行为（预期会丢任务）
+### 6.5 重启行为（任务持久化）
 
 ```bash
 sudo systemctl restart basketball
-curl -s -o /dev/null -w '%{http_code}\n' "http://<SERVER>/api/v1/analyses/$JOB_ID"
+sleep 2
+curl -s "http://<SERVER>/api/v1/analyses/$JOB_ID" | jq '{status, result, error}'
 ```
 
-预期 `404`。这是当前设计的已知行为：服务端任务只在内存里，重启后旧任务查不到。
-App 的本地历史保存的是结果快照，所以历史记录仍能看，但不能在服务重启后继续轮询旧任务。
+- 已完成的任务：仍返回原状态和 `result`（0.3.0 写入 SQLite，不再是 404）。
+- 重启时仍在 `queued`/`processing` 的任务：返回 `status=failed`，`error` 为
+  `服务重启导致任务中断，请重新上传视频`。
+- 这是「状态持久化」，不是「任务续跑」；需要续跑见第 11 节的任务队列建议。
 
 ---
 
@@ -564,7 +571,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 2. **长按首页底部的「服务端」状态行**（普通用户看不到这个入口）；
 3. 在开发者设置里填 `http://<公网IP>` 或 `https://你的域名`，保存；
 4. 点一下该行重新检查，应显示在线，并显示版本和检测器，例如
-   `服务端 0.2.0 · 检测器 classical`。
+   `服务端 0.3.0 · 检测器 classical`。
 
 如果服务端用 8080：填 `http://<公网IP>:8080`。
 
@@ -588,19 +595,21 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 部署完成后逐项打勾：
 
-- [ ] `GET /api/v1/health` 返回 `version=0.2.0`、`detector=classical`
-- [ ] `GET /docs` 可打开
+- [ ] `GET /api/v1/health` 返回 `version=0.3.0`、`detector=classical`
+- [ ] `GET /docs` 可打开，能看到 `/api/v1/auth/*` 与 `GET /api/v1/analyses`
+- [ ] 注册、登录、`GET /auth/me`、退出登录均返回预期状态码
 - [ ] 上传一段真实视频返回 `202`，任务最终 `completed`
 - [ ] 清晰命中的球能在 `result.shots` 中出现 `made=true`
 - [ ] 没有识别到时 `result.note` 给出了可理解的原因
 - [ ] `.txt` 上传返回 `415`
 - [ ] 不存在的任务返回 `404`
 - [ ] 超过 200 MB 返回 `413`
+- [ ] 登录用户的任务列表只包含自己的任务；另一个账号查询该任务返回 `404`
+- [ ] 服务端重启后，已完成任务仍能查询，App 本地历史仍能查看
 - [ ] App 首页「服务端」状态显示在线，版本/检测器正确
 - [ ] App 从录制/相册到结果页全流程走通
-- [ ] 服务端重启后，App 本地历史仍能查看（旧任务轮询返回 404 属预期）
 - [ ] 公网只开放必要端口；若用 Nginx，8000 未对公网开放
-- [ ] 上传目录已配置定期清理或已记录待办
+- [ ] `BASKETBALL_DB_PATH` 指向持久化目录；上传目录已配置定期清理或已记录待办
 
 ---
 
@@ -608,7 +617,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 | 现象 | 可能原因 | 处理 |
 | --- | --- | --- |
-| `detector` 是 `stub`，`version` 是 `0.1.0` | 部署的是 PR #2 之前的 `main` | 合入 PR #2 后重新部署，或按附录 A 部署 PR 分支 |
+| `detector` 是 `stub` 或 `version` 低于 `0.3.0` | 部署的是旧代码 | `git pull` 最新 `main` 后重启；确认 `server/app/services/db.py` 存在 |
 | 502 Bad Gateway | uvicorn 没起来/端口不对 | `systemctl status basketball`、`journalctl -u basketball -n 100`、`curl 127.0.0.1:8000/api/v1/health` |
 | App 显示离线 | 地址错、端口没开、安全组没放行 | 手机浏览器先访问 `http://<SERVER>/api/v1/health`；检查安全组和 Nginx |
 | 健康检查正常，但上传失败 | Nginx 体积/超时限制 | 调大 `client_max_body_size`、`proxy_read_timeout`；看 Nginx error log |
@@ -618,7 +627,9 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 | `note`: 未检测到可跟踪的篮球 | 球不是橙色、太小、光线差 | 换橙色球；靠近拍摄；提高 `BASKETBALL_SAMPLE_FPS` |
 | `note`: 检测到轨迹但未识别到投篮 | 投篮轨迹不经过筐口附近，或机位角度问题 | 调整机位让篮筐和球轨迹可见；检查 ROI；远距离偏出属于已知限制 |
 | 任务 `failed`：无法打开视频 | 编码不受支持/文件损坏 | 用 `ffmpeg` 转 H.264 MP4：`ffmpeg -i in.mov -c:v libx264 -pix_fmt yuv420p out.mp4` |
-| 服务重启后旧任务 404 | 任务存在内存 | 属预期；重新上传。需要持久化时再做队列/数据库 |
+| 服务重启后未完成任务变成 `failed` | 分析是进程内任务，重启不会续跑 | 属预期；重新上传。已完成任务不受影响 |
+| 登录返回 `401` | 密码错误，或 token 过期/已退出 | 重新登录；检查 `BASKETBALL_TOKEN_TTL_DAYS` |
+| 打开 `BASKETBALL_REQUIRE_AUTH=true` 后 App 上传 401 | App 还没接登录 | 先保持 `false`，或换用带 `Authorization` 的客户端 |
 | CPU 打满、分析很慢 | 多人同时上传、抽帧率高、视频大 | 单任务串行使用；降低 `BASKETBALL_SAMPLE_FPS`；控制视频时长/分辨率 |
 | 上传文件占满磁盘 | 上传目录未清理 | 配置 5.7 的定时清理，或手动删 `uploads` 下旧文件 |
 
@@ -626,31 +637,30 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 ## 11. 下一步建议
 
-1. **先合入 PR #2**，让 `main` 默认带 `classical` 检测器；
-2. 用第 7 节的方法拍 5–10 段真实视频，建第一版评估表和样本目录；
-3. 根据评估结果决定：继续调经典 CV，还是直接上学习型检测器（YOLO/RT-DETR + ByteTrack，
+1. 用第 7 节的方法拍 5–10 段真实视频，建第一版评估表和样本目录；
+2. 根据评估结果决定：继续调经典 CV，还是直接上学习型检测器（YOLO/RT-DETR + ByteTrack，
    注意 AGPL 等许可证）；
-4. 在公网长期运行前补：鉴权/限流、任务持久化、上传清理、HTTPS；
-5. App 端补 P1：人工纠正、后台通知、断点续传、普通用户设置页。
+3. 把 `BackgroundTasks` 换成可持久化队列（Redis/Celery 或 RQ），支持重启后续跑和多实例；
+4. App 接入注册/登录与 token 安全存储，打开 `BASKETBALL_REQUIRE_AUTH`，并补登录限流、HTTPS；
+5. App 端补 P1：人工纠正、后台通知、断点续传、普通用户设置页、云端历史同步。
 
 ---
 
 ## 附录 A：不合并 main 也能验证
 
-如果 PR #2 还没合入，直接部署它的代码（服务端 API 与 App 兼容）：
+> **历史说明**：PR #2 已合入 `main`，正常部署不需要本节，保留用于复现旧版本。
+
+如需复现 PR #2 合入前/刚合入时的服务端代码，可检出对应历史提交：
 
 ```bash
 sudo -u basketball git clone https://github.com/feiying985/basketball.git /opt/basketball/app
 cd /opt/basketball/app
-sudo -u basketball git fetch origin pull/2/head:pr-2
-sudo -u basketball git checkout pr-2
+git log --oneline --all --grep='classical CV shot detector'
+git checkout <包含该提交的 commit>
 ```
 
-然后按第 4.3 节继续安装依赖、第 5 节配置启动。验证完仍建议把 PR #2 合入 `main`，
-避免以后每次部署都要手动切分支。
-
-> 也可以直接 `git checkout <PR #2 的 head commit>`；用 `git log --oneline -1` 确认
-> 包含 `feat: add classical CV shot detector`。
+然后按第 4.3 节继续安装依赖、第 5 节配置启动。旧版本没有任务持久化和账号接口，
+第 6.5 节、第 9 节中与 SQLite/登录相关的检查项不适用。
 
 ## 附录 B：环境变量速查
 
@@ -662,12 +672,17 @@ sudo -u basketball git checkout pr-2
 | `BASKETBALL_HOOP_ROI` | 空 | 手动篮筐区域，格式 `x,y,width,height`（0–1 归一化） |
 | `BASKETBALL_MAX_UPLOAD_BYTES` | `209715200`（200 MB） | 单文件上传上限 |
 | `BASKETBALL_UPLOAD_DIR` | 系统临时目录 | 上传视频保存目录；生产建议 `/var/lib/basketball/uploads` |
+| `BASKETBALL_DB_PATH` | `<临时目录>/basketball-data/basketball.db` | SQLite 数据库；生产建议 `/var/lib/basketball/data/basketball.db` |
+| `BASKETBALL_REQUIRE_AUTH` | `false` | `true` 时上传/查询/列表都要求登录；App 接入登录前保持 `false` |
+| `BASKETBALL_TOKEN_TTL_DAYS` | `30` | 登录 token 有效天数；`0` 表示不过期 |
 
 变量在进程启动时读取，修改后执行 `sudo systemctl restart basketball`。
 
 ## 附录 C：文档验证说明
 
-本文档中的服务端代码路径、22 个服务端测试、`/api/v1/health`、上传/轮询、413/415/404 行为，
-已在本地用同一份代码和依赖实际跑通（Python 3.11、OpenCV 4.10、NumPy 1.26）。
+本文档中的服务端代码路径、39 个服务端测试、`/api/v1/health`、上传/轮询、413/415/404 行为，
+以及注册/登录、任务归属、SQLite 重启持久化，已在本地用同一份代码和依赖实际跑通
+（Python 3.11、OpenCV 4.10、NumPy 1.26）；持久化与账号细节见
+[server-persistence-accounts.md](server-persistence-accounts.md)。
 systemd/Nginx/阿里云安全组部分按 Ubuntu 24.04 编写，首次部署请按第 9 节逐项验收；
 如果实际环境有差异，以 `journalctl`、`nginx -t` 和健康检查结果为准。
