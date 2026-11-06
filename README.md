@@ -23,7 +23,11 @@
 │   │   ├── services/         # 任务存储、分析流程、跟踪/判定/检测器
 │   │   └── schemas.py        # 请求/响应模型
 │   └── tests/
-├── docs/                     # 进球识别方案调研 + 算法说明
+├── docs/
+│   ├── research/             # 进球识别方案调研
+│   ├── design/               # App 交互流程设计
+│   ├── shot-detection.md     # 算法与限制说明
+│   └── deployment-verification.md  # 部署与验证指引
 └── .github/workflows/        # 服务端测试 + 安卓构建 CI
 ```
 
@@ -145,6 +149,7 @@ CI 会在 PR 上分别运行服务端测试和安卓构建：
    YOLO/RT-DETR 检测篮球/篮筐 → ByteTrack 跟踪 → 轨迹穿筐判定，替换 `ClassicalShotDetector`。
    技术路线与候选项目见 [调研文档](docs/research/shot-recognition.md)。
 2. **结果人工纠正**：在结果页本地覆盖命中/未中，不写回服务端（P1）。
+   App 端交互流程设计见 [docs/design/app-interaction-flow.md](docs/design/app-interaction-flow.md)。
 3. **数据集与评估**：公开数据集冷启动 + 自采场地数据微调，建立逐球准确率评估集。
 4. **端侧实时**：TFLite / NCNN 集成（第二阶段）。
 
