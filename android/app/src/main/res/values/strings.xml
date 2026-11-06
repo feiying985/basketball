@@ -101,6 +101,22 @@
     <string name="review_rerecord">重录</string>
     <string name="review_reselect">重新选择</string>
     <string name="review_missing_video">视频文件不存在，请重新录制或选择</string>
+    <string name="review_hoop_label">篮筐位置</string>
+    <string name="review_hoop_auto">自动识别</string>
+    <string name="review_hoop_manual">已手动圈定</string>
+    <string name="review_hoop_pick">手动圈定</string>
+    <string name="review_hoop_repick">重新圈定</string>
+    <string name="review_hoop_clear">恢复自动识别</string>
+    <string name="review_hoop_hint">自动识别找错篮筐时，可以手动框选篮筐位置，识别会更准。</string>
+    <string name="review_hoop_frame_error">无法读取视频画面，请换一段视频试试</string>
+
+    <!-- 手动圈定篮筐 -->
+    <string name="hoop_roi_title">圈定篮筐</string>
+    <string name="hoop_roi_hint">在画面上拖动，框住篮筐的开口区域。</string>
+    <string name="hoop_roi_empty">还没有框选，请拖动画面</string>
+    <string name="hoop_roi_selected">已框选，点击确定保存</string>
+    <string name="hoop_roi_reset">重画</string>
+    <string name="hoop_roi_tip">框小一点、只含篮筐开口即可；留空则使用自动识别。</string>
 
     <!-- 分析页 -->
     <string name="analysis_title">分析</string>

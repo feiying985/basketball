@@ -1,5 +1,6 @@
 package com.feiying.basketball.ui.review
 
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -54,6 +55,7 @@ import com.feiying.basketball.data.ImportErrorReason
 import com.feiying.basketball.data.VideoFiles
 import com.feiying.basketball.data.VideoImportException
 import com.feiying.basketball.domain.Formatters
+import com.feiying.basketball.domain.HoopRoi
 import com.feiying.basketball.domain.SelectedVideo
 import com.feiying.basketball.domain.VideoIssue
 import com.feiying.basketball.domain.VideoRules
@@ -77,6 +79,9 @@ fun ReviewRoute(
     val snackbarHostState = remember { SnackbarHostState() }
     var importing by remember { mutableStateOf(false) }
     var starting by remember { mutableStateOf(false) }
+    var pickingFrame by remember { mutableStateOf(false) }
+    var hoopRoi by remember { mutableStateOf<HoopRoi?>(null) }
+    var pickerBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     LaunchedEffect(selected) {
         starting = false
@@ -111,13 +116,31 @@ fun ReviewRoute(
             ReviewContent(
                 video = video,
                 videoExists = video.file.exists(),
-                starting = starting || importing,
+                starting = starting || importing || pickingFrame,
+                hoopRoi = hoopRoi,
+                onPickHoopRoi = {
+                    if (!pickingFrame) {
+                        pickingFrame = true
+                        scope.launch {
+                            val frame = VideoFrameExtractor.firstFrame(video.file)
+                            pickingFrame = false
+                            if (frame == null) {
+                                snackbarHostState.showSnackbar(
+                                    context.getString(R.string.review_hoop_frame_error),
+                                )
+                            } else {
+                                pickerBitmap = frame
+                            }
+                        }
+                    }
+                },
+                onClearHoopRoi = { hoopRoi = null },
                 onBack = onBack,
                 onStart = {
                     starting = true
                     scope.launch {
                         try {
-                            val record = container.repository.createRecord(video)
+                            val record = container.repository.createRecord(video, hoopRoi)
                             container.repository.start(record.localId)
                             navController.navigate(Routes.analysis(record.localId))
                         } catch (error: Exception) {
@@ -139,6 +162,17 @@ fun ReviewRoute(
                     }
                 },
             )
+            pickerBitmap?.let { bitmap ->
+                HoopRoiPickerDialog(
+                    bitmap = bitmap,
+                    initial = hoopRoi,
+                    onDismiss = { pickerBitmap = null },
+                    onConfirm = { selectedRoi ->
+                        hoopRoi = selectedRoi
+                        pickerBitmap = null
+                    },
+                )
+            }
         }
         SnackbarHost(
             hostState = snackbarHostState,
@@ -174,6 +208,9 @@ fun ReviewContent(
     video: SelectedVideo,
     videoExists: Boolean,
     starting: Boolean,
+    hoopRoi: HoopRoi? = null,
+    onPickHoopRoi: () -> Unit = {},
+    onClearHoopRoi: () -> Unit = {},
     onBack: () -> Unit,
     onStart: () -> Unit,
     onReselect: () -> Unit,
@@ -284,6 +321,14 @@ fun ReviewContent(
             }
         }
 
+        Spacer(Modifier.height(20.dp))
+        HoopRoiSection(
+            hoopRoi = hoopRoi,
+            enabled = videoExists && !starting,
+            onPick = onPickHoopRoi,
+            onClear = onClearHoopRoi,
+        )
+
         Spacer(Modifier.height(28.dp))
         Button(
             onClick = onStart,
@@ -322,6 +367,64 @@ fun ReviewContent(
             )
         }
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun HoopRoiSection(
+    hoopRoi: HoopRoi?,
+    enabled: Boolean,
+    onPick: () -> Unit,
+    onClear: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.review_hoop_label),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(
+                            if (hoopRoi == null) {
+                                R.string.review_hoop_auto
+                            } else {
+                                R.string.review_hoop_manual
+                            },
+                        ),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
+                TextButton(onClick = onPick, enabled = enabled) {
+                    Text(
+                        stringResource(
+                            if (hoopRoi == null) {
+                                R.string.review_hoop_pick
+                            } else {
+                                R.string.review_hoop_repick
+                            },
+                        ),
+                    )
+                }
+            }
+            Text(
+                text = stringResource(R.string.review_hoop_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (hoopRoi != null) {
+                TextButton(onClick = onClear, enabled = enabled) {
+                    Text(stringResource(R.string.review_hoop_clear))
+                }
+            }
+        }
     }
 }
 

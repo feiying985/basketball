@@ -15,7 +15,7 @@ detector later.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import cv2
@@ -49,6 +49,11 @@ class ShotDetectionConfig:
     hoop_max_width_ratio: float = 0.45
     hoop_max_height_ratio: float = 0.60
     hoop_top_ratio: float = 0.80
+    # Candidates sitting on an orange object that persists across frames (a
+    # lamp post, a poster, a parked car) are static noise, not the ball.  Their
+    # distance-transform peak can be large enough to win one of the eight
+    # candidate slots, so they are rejected before the slot allocation.
+    static_persistence_threshold: float = 0.50
     max_track_gap: int = 5
     min_track_points: int = 5
     min_vertical_range_ratio: float = 0.04
@@ -61,19 +66,31 @@ class ClassicalShotDetector:
     def __init__(self, config: ShotDetectionConfig | None = None) -> None:
         self.config = config or ShotDetectionConfig()
 
-    def analyze(self, video_path: Path) -> AnalysisResult:
+    def analyze(
+        self,
+        video_path: Path,
+        *,
+        hoop_roi: tuple[float, float, float, float] | None = None,
+    ) -> AnalysisResult:
         if not video_path.exists():
             raise FileNotFoundError(f"video not found: {video_path}")
+
+        # A user-drawn hoop region only affects this video; the rest of the
+        # deployment configuration stays as-is.
+        config = self.config if hoop_roi is None else replace(self.config, hoop_roi=hoop_roi)
 
         capture = cv2.VideoCapture(str(video_path))
         if not capture.isOpened():
             raise VideoAnalysisError("无法打开视频文件，请确认格式受支持且文件完整。")
+        # Keep analysis frames in display orientation so a ROI drawn on the
+        # phone preview (which applies rotation metadata) lines up.
+        capture.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
 
         try:
             source_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
             if not 1.0 <= source_fps <= 240.0:
                 source_fps = 30.0
-            sample_step = max(1, int(round(source_fps / max(self.config.sample_fps, 1.0))))
+            sample_step = max(1, int(round(source_fps / max(config.sample_fps, 1.0))))
 
             detections: list[list[BallPoint]] = []
             persistent: np.ndarray | None = None
@@ -89,7 +106,7 @@ class ClassicalShotDetector:
                     source_frame += 1
                     continue
 
-                frame = _resize_for_analysis(frame, self.config.max_analysis_width)
+                frame = _resize_for_analysis(frame, config.max_analysis_width)
                 height, width = frame.shape[:2]
                 if analysis_size is None:
                     analysis_size = (width, height)
@@ -97,17 +114,29 @@ class ClassicalShotDetector:
                 elif analysis_size != (width, height):
                     frame = cv2.resize(frame, analysis_size, interpolation=cv2.INTER_AREA)
 
-                mask = _clean_mask(_orange_mask(frame, self.config))
+                mask = _clean_mask(_orange_mask(frame, config))
                 assert persistent is not None
-                cv2.accumulateWeighted(mask.astype(np.float32) / 255.0, persistent, _PERSISTENCE_ALPHA)
+                if sample_frame == 0:
+                    # Seed the persistence map with the first frame so static
+                    # orange objects are already "persistent" before the
+                    # exponential average has warmed up.  Otherwise they win
+                    # every candidate slot for the first half second.
+                    persistent = mask.astype(np.float32) / 255.0
+                else:
+                    cv2.accumulateWeighted(
+                        mask.astype(np.float32) / 255.0,
+                        persistent,
+                        _PERSISTENCE_ALPHA,
+                    )
 
                 timestamp = source_frame / source_fps
                 detections.append(
                     _ball_candidates(
                         mask,
+                        persistent,
                         sample_frame=sample_frame,
                         timestamp=timestamp,
-                        config=self.config,
+                        config=config,
                     )
                 )
                 sample_frame += 1
@@ -119,14 +148,14 @@ class ClassicalShotDetector:
             raise VideoAnalysisError("视频中没有可读取的画面。")
 
         width, height = analysis_size
-        hoop = self._hoop(persistent, width=width, height=height)
+        hoop = self._hoop(persistent, width=width, height=height, config=config)
         if hoop is None:
             return AnalysisResult(
                 detector=self.name,
                 shots=[],
                 note=(
                     "未检测到篮筐：当前基线需要画面中持续可见的橙色/红色篮筐，"
-                    "或通过 BASKETBALL_HOOP_ROI 指定篮筐区域。"
+                    "或在确认视频时手动圈定篮筐（也可用 BASKETBALL_HOOP_ROI 指定）。"
                 ),
             )
 
@@ -134,9 +163,9 @@ class ClassicalShotDetector:
             detections,
             frame_width=width,
             frame_height=height,
-            max_gap=self.config.max_track_gap,
-            min_points=self.config.min_track_points,
-            min_vertical_range_ratio=self.config.min_vertical_range_ratio,
+            max_gap=config.max_track_gap,
+            min_points=config.min_track_points,
+            min_vertical_range_ratio=config.min_vertical_range_ratio,
         )
         if not tracks:
             return AnalysisResult(
@@ -149,7 +178,7 @@ class ClassicalShotDetector:
             tracks,
             hoop,
             frame_height=height,
-            cooldown_seconds=self.config.shot_cooldown_seconds,
+            cooldown_seconds=config.shot_cooldown_seconds,
         )
         if not events:
             return AnalysisResult(
@@ -168,16 +197,24 @@ class ClassicalShotDetector:
         ]
         return AnalysisResult(detector=self.name, shots=shots)
 
-    def _hoop(self, persistent: np.ndarray, *, width: int, height: int) -> Hoop | None:
-        if self.config.hoop_roi is not None:
-            x, y, roi_width, roi_height = self.config.hoop_roi
+    def _hoop(
+        self,
+        persistent: np.ndarray,
+        *,
+        width: int,
+        height: int,
+        config: ShotDetectionConfig,
+    ) -> Hoop | None:
+        if config.hoop_roi is not None:
+            x, y, roi_width, roi_height = config.hoop_roi
             return Hoop(
                 center_x=(x + roi_width / 2.0) * width,
                 center_y=(y + roi_height / 2.0) * height,
                 width=roi_width * width,
                 height=roi_height * height,
             )
-        return _find_hoop(persistent, width=width, height=height, config=self.config)
+        return _find_hoop(persistent, width=width, height=height, config=config)
+
 
 
 def _resize_for_analysis(frame: np.ndarray, max_width: int) -> np.ndarray:
@@ -208,6 +245,7 @@ def _clean_mask(mask: np.ndarray) -> np.ndarray:
 
 def _ball_candidates(
     mask: np.ndarray,
+    persistent: np.ndarray,
     *,
     sample_frame: int,
     timestamp: float,
@@ -219,6 +257,13 @@ def _ball_candidates(
     found while it visually touches the thin rim. A plain contour scan would
     merge both into one wide contour and lose the ball exactly at the moment it
     matters most.
+
+    A candidate is rejected when its neighbourhood is a persistent orange
+    structure.  Lamp posts, posters and other static orange objects produce a
+    large distance-transform peak every frame; with only eight candidate slots
+    per frame they pushed the real ball out in the real-night-video
+    verification.  The ball keeps moving, so its persistence stays low except
+    for the few frames it spends at the top of its arc.
     """
 
     height, width = mask.shape[:2]
@@ -242,6 +287,13 @@ def _ball_candidates(
         radius = float(values[best])
         if radius > maximum_radius:
             continue
+        if _persistence_around(
+            persistent,
+            x=float(xs[best]),
+            y=float(ys[best]),
+            radius=radius,
+        ) >= config.static_persistence_threshold:
+            continue
         candidates.append(
             BallPoint(
                 frame=sample_frame,
@@ -254,6 +306,32 @@ def _ball_candidates(
 
     candidates.sort(key=lambda candidate: candidate.radius, reverse=True)
     return candidates[:_MAX_BALL_CANDIDATES]
+
+
+def _persistence_around(persistent: np.ndarray, *, x: float, y: float, radius: float) -> float:
+    """Mean orange persistence inside a disk centred on a candidate."""
+
+    height, width = persistent.shape[:2]
+    disk_radius = max(int(round(radius)), 2)
+    x0 = max(0, int(round(x)) - disk_radius)
+    x1 = min(width, int(round(x)) + disk_radius + 1)
+    y0 = max(0, int(round(y)) - disk_radius)
+    y1 = min(height, int(round(y)) + disk_radius + 1)
+    region = persistent[y0:y1, x0:x1]
+    if region.size == 0:
+        return 1.0
+    disk = np.zeros(region.shape, dtype=np.uint8)
+    cv2.circle(
+        disk,
+        (int(round(x)) - x0, int(round(y)) - y0),
+        disk_radius,
+        1,
+        thickness=-1,
+    )
+    values = region[disk.astype(bool)]
+    if values.size == 0:
+        return 1.0
+    return float(values.mean())
 
 
 def _find_hoop(

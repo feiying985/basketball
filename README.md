@@ -68,6 +68,8 @@ MVP 先做**服务端离线分析**：App 只负责采集/上传，识别逻辑�
 - 录制使用 CameraX，最长 **20 分钟**，少于 1 秒不生成视频；
 - 相册选择使用系统 Photo Picker，不需要存储权限，选中后复制到应用缓存；
 - 上传上限与服务端一致（200 MB），显示真实字节进度，可取消；
+- 确认视频时可以**手动圈定篮筐**：拖动框选画面中的篮筐开口，坐标随上传一起提交，
+  用于自动检测找错篮筐或篮筐不是橙色的场景；不圈定则继续使用自动识别；
 - 本地历史使用 Room 保存结果快照，服务端重启后仍可回看；
 - 服务端地址默认由 `build.gradle.kts` 配置。真机调试需要改地址时，在首页**长按服务状态**打开开发者设置，
   普通用户看不到该入口。
@@ -105,7 +107,7 @@ cd android
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/api/v1/health` | 健康检查，返回服务版本与当前检测器名称 |
-| `POST` | `/api/v1/analyses` | 上传视频（multipart 字段 `file`），创建分析任务，返回 `202` |
+| `POST` | `/api/v1/analyses` | 上传视频（multipart 字段 `file`），可选 `hoop_roi=x,y,w,h` 手动指定篮筐，创建分析任务，返回 `202` |
 | `GET` | `/api/v1/analyses` | 当前用户的任务列表（需要登录） |
 | `GET` | `/api/v1/analyses/{id}` | 查询任务状态与识别结果 |
 | `POST` | `/api/v1/auth/register` | 注册并返回 Bearer token |
@@ -154,6 +156,12 @@ GET  /api/v1/analyses       →  当前账号的历史任务
 | `BASKETBALL_SAMPLE_FPS` | `10` | 抽帧分析的帧率，越高越准也越慢 |
 | `BASKETBALL_SHOT_COOLDOWN_SECONDS` | `1.5` | 两次进球判定的最小间隔，避免同一球重复计数 |
 | `BASKETBALL_HOOP_ROI` | 空 | 手动指定篮筐区域，格式 `x,y,width,height`（0-1 归一化）；用于白色/非橙色篮筐 |
+| `BASKETBALL_HUE_MIN` / `BASKETBALL_HUE_MAX` | `0` / `38` | 橙色掩码的 HSV 色相范围（OpenCV 0-179）；夜景球偏黄时可把上限调到 40-45 |
+| `BASKETBALL_SATURATION_MIN` | `70` | 橙色掩码的最小饱和度；运动模糊导致掉色时可降到 45 |
+| `BASKETBALL_VALUE_MIN` | `50` | 橙色掩码的最小亮度；夜景可降到 40 |
+| `BASKETBALL_BALL_MIN_RADIUS_RATIO` | `0.010` | 球候选的最小半径（相对画面短边） |
+| `BASKETBALL_BALL_MAX_RADIUS_RATIO` | `0.120` | 球候选的最大半径；橙色灯柱/衣物较大时可降到 0.05 |
+| `BASKETBALL_STATIC_PERSISTENCE_THRESHOLD` | `0.50` | 候选点所在区域的持续橙色占比达到该值时视为静止噪声并丢弃 |
 | `BASKETBALL_MAX_UPLOAD_BYTES` | `209715200` | 单文件上传上限（字节） |
 | `BASKETBALL_UPLOAD_DIR` | 系统临时目录 | 上传视频保存目录 |
 | `BASKETBALL_DB_PATH` | `<临时目录>/basketball-data/basketball.db` | SQLite 数据库文件；生产建议持久化目录 |

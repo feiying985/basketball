@@ -8,6 +8,8 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "analysis_records")
@@ -21,6 +23,7 @@ data class AnalysisRecordEntity(
     val sizeBytes: Long,
     val durationMs: Long?,
     val status: String,
+    val hoopRoi: String? = null,
     val resultJson: String?,
     val errorCode: String?,
     val errorDetail: String?,
@@ -115,7 +118,7 @@ interface AnalysisRecordDao {
 
 @Database(
     entities = [AnalysisRecordEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -123,5 +126,12 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         const val NAME = "basketball.db"
+
+        /** Adds the optional manual hoop rectangle without dropping history. */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE analysis_records ADD COLUMN hoopRoi TEXT")
+            }
+        }
     }
 }

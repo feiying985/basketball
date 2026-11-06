@@ -211,6 +211,8 @@ sequenceDiagram
 ```
 
 - 上传时 `multipart` 字段名必须是 `file`，文件名必须带扩展名（服务端用扩展名判断格式）。
+- 用户在确认页手动圈定篮筐时，额外提交 `hoop_roi=x,y,width,height`（0-1 归一化）；
+  不提交则服务端使用自动检测或部署级 `BASKETBALL_HOOP_ROI`。
 - 轮询在页面可见时进行；离开页面或 App 进入后台时停止请求，服务端任务不受影响。
 
 ### 4.6 中断与恢复
@@ -334,6 +336,8 @@ sequenceDiagram
 
 - 顶部：视频预览播放器（可播放/暂停，默认不自动播放）。
 - 信息区：文件名、时长、大小、来源（录制/相册）。
+- 篮筐位置区：显示「自动识别」或「已手动圈定」，可打开取帧框选弹窗重新圈定；
+  框选结果随本次上传提交，历史记录里保留以便重试。
 - 校验结果：不通过时红色说明，禁用「开始分析」。
 - 底部主按钮：「开始分析」；次要按钮：「重录」或「重新选择」。
 
@@ -349,6 +353,8 @@ sequenceDiagram
 **交互**：
 
 - 「开始分析」：创建本地记录（状态 `UPLOADING`），进入分析页并开始上传。
+- 「手动圈定」：提取视频首帧，在画面上拖出篮筐开口的矩形；确定后回填归一化
+  坐标，开始分析时随 `hoop_roi` 字段上传。上传失败重试会复用同一坐标。
 - 上传失败后返回本页，已选视频和校验状态保留。
 
 ### 5.5 分析页
@@ -594,6 +600,7 @@ data class AnalysisRecord(
     val sizeBytes: Long,
     val durationMs: Long?,
     val status: AnalysisStatus,
+    val hoopRoi: HoopRoi?,          // 用户手动圈定的篮筐；null 表示自动识别
     val result: AnalysisResult?,
     val error: String?,
 )

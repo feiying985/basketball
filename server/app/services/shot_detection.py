@@ -19,17 +19,34 @@ from app.config import settings
 from app.schemas import AnalysisResult
 
 
+HoopRoi = tuple[float, float, float, float]
+
+
 class ShotDetector(Protocol):
     name: str
 
-    def analyze(self, video_path: Path) -> AnalysisResult:
-        """Analyze a video and return the detected shot events."""
+    def analyze(
+        self,
+        video_path: Path,
+        *,
+        hoop_roi: HoopRoi | None = None,
+    ) -> AnalysisResult:
+        """Analyze a video and return the detected shot events.
+
+        ``hoop_roi`` is an optional normalized ``x,y,width,height`` region
+        chosen by the user; it overrides the deployment-wide ROI for this run.
+        """
 
 
 class StubShotDetector:
     name = "stub"
 
-    def analyze(self, video_path: Path) -> AnalysisResult:
+    def analyze(
+        self,
+        video_path: Path,
+        *,
+        hoop_roi: HoopRoi | None = None,
+    ) -> AnalysisResult:
         if not video_path.exists():
             raise FileNotFoundError(f"video not found: {video_path}")
         return AnalysisResult(
@@ -54,6 +71,13 @@ def create_detector() -> ShotDetector:
                 sample_fps=settings.sample_fps,
                 shot_cooldown_seconds=settings.shot_cooldown_seconds,
                 hoop_roi=settings.hoop_roi,
+                hue_min=settings.hue_min,
+                hue_max=settings.hue_max,
+                saturation_min=settings.saturation_min,
+                value_min=settings.value_min,
+                ball_min_radius_ratio=settings.ball_min_radius_ratio,
+                ball_max_radius_ratio=settings.ball_max_radius_ratio,
+                static_persistence_threshold=settings.static_persistence_threshold,
             )
         )
     raise ValueError(

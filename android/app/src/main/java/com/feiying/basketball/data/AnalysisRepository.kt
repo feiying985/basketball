@@ -7,6 +7,7 @@ import com.feiying.basketball.domain.AnalysisError
 import com.feiying.basketball.domain.AnalysisRecord
 import com.feiying.basketball.domain.AnalysisResult
 import com.feiying.basketball.domain.AnalysisStatus
+import com.feiying.basketball.domain.HoopRoi
 import com.feiying.basketball.domain.PollingPolicy
 import com.feiying.basketball.domain.SelectedVideo
 import com.feiying.basketball.domain.ShotEvent
@@ -109,7 +110,7 @@ class AnalysisRepository(
         }
     }
 
-    suspend fun createRecord(video: SelectedVideo): AnalysisRecord {
+    suspend fun createRecord(video: SelectedVideo, hoopRoi: HoopRoi? = null): AnalysisRecord {
         val timestamp = now()
         val record = AnalysisRecord(
             localId = UUID.randomUUID().toString(),
@@ -121,6 +122,7 @@ class AnalysisRepository(
             sizeBytes = video.sizeBytes,
             durationMs = video.durationMs,
             status = AnalysisStatus.UPLOADING,
+            hoopRoi = hoopRoi,
             updatedAt = timestamp,
         )
         dao.upsert(record.toEntity())
@@ -220,7 +222,11 @@ class AnalysisRepository(
             }
             setActive(recordId, ActiveAnalysis(ActivePhase.UPLOADING, totalBytes = file.length()))
             try {
-                val dto = api.upload(file, entity.filename) { sent, total ->
+                val dto = api.upload(
+                    file = file,
+                    filename = entity.filename,
+                    hoopRoi = HoopRoi.parse(entity.hoopRoi),
+                ) { sent, total ->
                     setActive(
                         recordId,
                         ActiveAnalysis(
@@ -409,6 +415,7 @@ class AnalysisRepository(
         sizeBytes = sizeBytes,
         durationMs = durationMs,
         status = status.toStatus() ?: AnalysisStatus.FAILED,
+        hoopRoi = HoopRoi.parse(hoopRoi),
         result = resultJson?.let { stored ->
             runCatching {
                 json.decodeFromString(AnalysisResult.serializer(), stored)
@@ -429,6 +436,7 @@ class AnalysisRepository(
         sizeBytes = sizeBytes,
         durationMs = durationMs,
         status = status.name,
+        hoopRoi = hoopRoi?.toFormValue(),
         resultJson = result?.let { json.encodeToString(AnalysisResult.serializer(), it) },
         errorCode = errorCode?.name,
         errorDetail = errorDetail,

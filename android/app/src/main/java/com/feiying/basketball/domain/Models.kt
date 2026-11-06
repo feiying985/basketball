@@ -1,6 +1,7 @@
 package com.feiying.basketball.domain
 
 import java.io.File
+import java.util.Locale
 import kotlinx.serialization.Serializable
 
 /** Where a video came from. */
@@ -59,6 +60,7 @@ data class AnalysisRecord(
     val sizeBytes: Long,
     val durationMs: Long?,
     val status: AnalysisStatus,
+    val hoopRoi: HoopRoi? = null,
     val result: AnalysisResult? = null,
     val errorCode: AnalysisError? = null,
     val errorDetail: String? = null,
@@ -90,3 +92,43 @@ data class SelectedVideo(
     val durationMs: Long?,
     val source: VideoSource,
 )
+
+/**
+ * Normalized rectangle (0..1 of the video frame) marking the hoop.
+ *
+ * The server accepts the same `x,y,width,height` format as the
+ * `BASKETBALL_HOOP_ROI` environment variable and the `hoop_roi` upload field.
+ */
+data class HoopRoi(
+    val x: Float,
+    val y: Float,
+    val width: Float,
+    val height: Float,
+) {
+    val isValid: Boolean
+        get() = x >= 0f &&
+            y >= 0f &&
+            width > 0f &&
+            height > 0f &&
+            x + width <= 1.0001f &&
+            y + height <= 1.0001f
+
+    fun toFormValue(): String = String.format(
+        Locale.US,
+        "%.5f,%.5f,%.5f,%.5f",
+        x,
+        y,
+        width,
+        height,
+    )
+
+    companion object {
+        fun parse(raw: String?): HoopRoi? {
+            val parts = raw?.split(',')?.map { it.trim().toFloatOrNull() } ?: return null
+            if (parts.size != 4) return null
+            val values = parts.map { it ?: return null }
+            return HoopRoi(values[0], values[1], values[2], values[3])
+                .takeIf { it.isValid }
+        }
+    }
+}

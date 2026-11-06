@@ -87,6 +87,39 @@ def test_dribble_produces_no_shots(tmp_path: Path) -> None:
     assert result.note is not None
 
 
+def test_static_orange_noise_does_not_hide_the_ball(tmp_path: Path) -> None:
+    video = tmp_path / "static-noise.avi"
+    write_shot_video(video, static_blobs=10)
+
+    result = _detector().analyze(video)
+
+    assert any(shot.made for shot in result.shots)
+
+
+def test_without_static_filter_the_noise_hides_the_ball(tmp_path: Path) -> None:
+    """Document the failure mode that motivated the persistence filter."""
+
+    video = tmp_path / "static-noise-unfiltered.avi"
+    write_shot_video(video, static_blobs=10)
+    detector = _detector(static_persistence_threshold=1.1)
+
+    result = detector.analyze(video)
+
+    assert result.shots == []
+
+
+def test_per_request_hoop_roi_overrides_environment(tmp_path: Path) -> None:
+    video = tmp_path / "white-rim-roi.avi"
+    write_shot_video(video, rim_color=(240, 240, 240))
+
+    result = _detector().analyze(
+        video,
+        hoop_roi=(0.40, 0.26, 0.20, 0.04),
+    )
+
+    assert any(shot.made for shot in result.shots)
+
+
 def test_unreadable_video_raises(tmp_path: Path) -> None:
     video = tmp_path / "broken.mp4"
     video.write_bytes(b"not a video")
