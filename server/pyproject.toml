@@ -4,13 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "basketball-server"
-version = "0.1.0"
-description = "Basketball shot recognition backend (MVP scaffold)"
+version = "0.2.0"
+description = "Basketball shot recognition backend"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<0.116",
     "uvicorn[standard]>=0.32,<0.33",
     "python-multipart>=0.0.20,<0.1",
+    "numpy>=1.26,<2",
+    "opencv-python-headless>=4.10,<5",
 ]
 
 [project.optional-dependencies]

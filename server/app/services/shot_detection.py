@@ -1,10 +1,13 @@
-"""Shot detection abstraction.
+"""Shot detection abstraction and detector factory.
 
-The MVP deliberately ships a placeholder detector. It returns no shots so
-that upload/job plumbing can be tested without pretending that recognition
-already works. A real implementation (YOLO + tracking, see
-docs/research/shot-recognition.md) replaces ``StubShotDetector`` behind the
-same interface.
+The default implementation is the classical OpenCV baseline in
+``app.services.classical_shot_detection``. A stub detector remains available
+for plumbing tests and for running the API without video dependencies:
+
+    BASKETBALL_DETECTOR=stub uvicorn app.main:app
+
+A learned detector (for example YOLO + ByteTrack) can replace the classical one
+behind the same ``ShotDetector`` interface.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
+from app.config import settings
 from app.schemas import AnalysisResult
 
 
@@ -31,8 +35,30 @@ class StubShotDetector:
         return AnalysisResult(
             detector=self.name,
             shots=[],
-            note="占位检测器：尚未接入 CV 模型，未产生识别结果。",
+            note="占位检测器：未接入识别逻辑，未产生识别结果。",
         )
 
 
-detector: ShotDetector = StubShotDetector()
+def create_detector() -> ShotDetector:
+    backend = settings.detector_backend
+    if backend in {"stub", "none"}:
+        return StubShotDetector()
+    if backend in {"classical", "opencv"}:
+        from app.services.classical_shot_detection import (
+            ClassicalShotDetector,
+            ShotDetectionConfig,
+        )
+
+        return ClassicalShotDetector(
+            ShotDetectionConfig(
+                sample_fps=settings.sample_fps,
+                shot_cooldown_seconds=settings.shot_cooldown_seconds,
+                hoop_roi=settings.hoop_roi,
+            )
+        )
+    raise ValueError(
+        f"未知的检测器后端: {backend!r}；可选值: classical, stub"
+    )
+
+
+detector: ShotDetector = create_detector()
