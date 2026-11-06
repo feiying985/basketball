@@ -1,6 +1,6 @@
 # 后端部署与进球识别验证指引
 
-> - **适用代码**：`server` 0.4.1（经典 CV 检测器 + SQLite 任务持久化 + 账号体系）；安卓端为 `main` 上的 App MVP。
+> - **适用代码**：`server` 0.5.0（经典 CV 检测器 + SQLite 任务持久化 + 账号体系 + 进球片段）；安卓端为 `main` 上的 App MVP。
 > - **更新日期**：2026-11-06
 > - **目标环境**：阿里云 ECS（Ubuntu 24.04 LTS，2 vCPU / 2 GB 起）
 > - **文档定位**：把「部署后端 → 验证接口 → 验证进球识别 → 用 App 走通全流程」串成一次可执行的验收；同时说明当前完成度和还缺的功能。
@@ -11,6 +11,10 @@
 >   `hoop_roi` 与 App 手动圈筐；0.4.1 把静止噪声默认阈值改为 0.95（球与篮筐
 >   重叠时不再被误删），并新增自动找筐置信度检查：多个橙色候选接近时提示手动圈筐，
 >   不再用错误的篮筐返回事件。算法细节见 [shot-detection.md](shot-detection.md)。
+> - **0.5.0 变更**：识别完成后为每个命中球生成前后各 5 秒的 MP4，新增
+>   `GET /api/v1/analyses/{id}/clips/{index}`（支持 Range）、`jobs.stage`、
+>   `result.shots[].clip` 与 `health.clips`；App 结果页可播放片段并保存到相册。
+>   部署机必须安装 ffmpeg，细节见 [shot-clips.md](shot-clips.md)。
 
 ## 0. 先回答两个问题
 
@@ -18,8 +22,8 @@
 
 **可以。`main` 已包含经典 CV 检测器（PR #2 已合入）。**
 
-- 0.4.1 默认 `BASKETBALL_DETECTOR=classical`，任务完成时会返回 `result.shots`；
-- 部署后先确认 `GET /api/v1/health` 返回 `version=0.4.1`、`detector=classical`。如果
+- 0.5.0 默认 `BASKETBALL_DETECTOR=classical`，任务完成时会返回 `result.shots`；
+- 部署后先确认 `GET /api/v1/health` 返回 `version=0.5.0`、`detector=classical`。如果
   `detector` 是 `stub` 或版本更旧，说明代码不是最新 `main`，先 `git pull` 再重启；
 - 仍想复现 PR #2 合入前的行为时，可检出对应历史提交；[附录 A](#附录-a不合并-main-也能验证)
   保留为历史说明，正常部署不再需要。
@@ -41,21 +45,22 @@
 | 真实场地准确率评估与调参 | ❌ 未做 | 需要真实视频样本；当前只有合成视频测试 |
 | 结果人工纠正（命中/未中） | ❌ 未做 | 设计里放在 P1 |
 | 服务端任务持久化 | ✅ 已完成 | 0.3.0 起使用 SQLite，重启后已完成任务仍可查询 |
+| 进球片段（服务端生成 + App 播放/保存） | ✅ 已完成 | 0.5.0；默认只剪命中、前后各 5 秒，部署需装 ffmpeg |
 | 任务队列 / 断点续跑 | ❌ 未做 | 分析仍是进程内任务；重启时未完成任务标记为 `failed` |
 | 账号体系（注册/登录/token/任务归属） | 🟡 服务端已完成 | 0.3.0 起已提供接口；App 登录与云端历史未接入 |
 | 限流 / HTTPS / 上传文件清理 | ❌ 未做 | 公网长期运行前需要补；上传文件目前不自动删除 |
 | 云端历史 / 多设备同步 | ❌ 未做 | 服务端已有任务列表接口，App 仍只有本地 Room 历史 |
 | 端侧实时识别 | ❌ 未做 | 规划在第二阶段（TFLite / NCNN） |
-| 分享、多人/多球统计 | ❌ 未做 | 当前不在 MVP 范围 |
+| 分享、多人/多球统计 | ❌ 未做 | 当前不在 MVP 范围；片段暂不支持分享 |
 
 按优先级展开：
 
 - **P0（让这次验证真正有意义）**
-  1. 确认部署的是 `main` 0.4.1（健康检查 `version=0.4.1`、`detector=classical`）；
+  1. 确认部署的是 `main` 0.5.0（健康检查 `version=0.5.0`、`detector=classical`）；
   2. 用真实球场视频跑一批样本，记录「实际命中 vs 识别命中」，作为第一版评估集。
 - **P1（让 MVP 可日常使用）**
   1. 结果人工纠正（本地覆盖 `made`，不写回服务端）；
-  2. 可持久化的任务队列（重启后续跑）、上传文件过期清理；
+  2. 可持久化的任务队列（重启后续跑）、上传文件与片段过期清理；
   3. App 接入注册/登录与 token 存储，打开 `BASKETBALL_REQUIRE_AUTH`；
   4. 登录限流、HTTPS 域名、App 后台完成通知、断点续传。
 - **P2（产品化）**
@@ -91,8 +96,8 @@ FastAPI + OpenCV 经典 CV 检测器
 2. **默认没有强制鉴权**。0.3.0 起已提供账号与 Bearer token，但 `BASKETBALL_REQUIRE_AUTH`
    默认为 `false`，以便现有 App 不改代码即可使用。验证期间请用安全组限制来源 IP；接好 App
    登录后把该变量设为 `true`，并在 Nginx/应用层补登录限流。
-3. **上传文件不会自动删除**。每次分析都会在 `BASKETBALL_UPLOAD_DIR` 留一份原视频；
-   长时间运行前请按 [5.7 节](#57-清理上传文件可选) 配置定期清理。
+3. **上传文件和片段不会自动删除**。每次分析都会在 `BASKETBALL_UPLOAD_DIR` 留一份原视频，
+   片段写到 `<upload_dir>/clips`；长时间运行前请按 [5.7 节](#57-清理上传文件与片段可选) 配置定期清理。
 
 ---
 
@@ -157,7 +162,9 @@ python3 --version   # 需要 >= 3.11
 - `python3-venv`：创建虚拟环境；
 - `nginx`：反向代理；
 - `jq`：本文的 JSON 查看/解析命令会用到；
-- `ffmpeg`：可选，但强烈建议装。遇到手机 HEVC/H.265 视频解码失败时，可以用它转成 H.264 MP4。
+- `ffmpeg`：**0.5.0 起片段功能的必需依赖**；服务端启动时探测，缺失时
+  `health.clips=false`、识别仍可完成但不会生成片段。HEVC/H.265 源视频也由它统一转 H.264。
+  安装后可用 `ffmpeg -version` 确认。
 
 OpenCV 使用的是 `opencv-python-headless`，不需要 `libgl1` 等图形库。
 
@@ -169,7 +176,7 @@ OpenCV 使用的是 `opencv-python-headless`，不需要 `libgl1` 等图形库�
 
 ```bash
 sudo useradd --system --create-home --shell /usr/sbin/nologin basketball
-sudo mkdir -p /opt/basketball /var/lib/basketball/uploads /var/lib/basketball/data
+sudo mkdir -p /opt/basketball /var/lib/basketball/uploads /var/lib/basketball/clips /var/lib/basketball/data
 sudo chown -R basketball:basketball /opt/basketball /var/lib/basketball
 ```
 
@@ -212,6 +219,13 @@ BASKETBALL_SHOT_COOLDOWN_SECONDS=1.5
 # App 接入登录前保持 false；接入后改为 true 强制鉴权
 BASKETBALL_REQUIRE_AUTH=false
 BASKETBALL_TOKEN_TTL_DAYS=30
+# 进球片段：默认只剪命中球、前后各 5 秒
+BASKETBALL_CLIP_ENABLED=true
+BASKETBALL_CLIP_PRE_SECONDS=5
+BASKETBALL_CLIP_POST_SECONDS=5
+BASKETBALL_CLIP_DIR=/var/lib/basketball/clips
+# ffmpeg 不在 PATH 时取消注释并改成实际路径
+# BASKETBALL_FFMPEG_PATH=/usr/bin/ffmpeg
 # 白色/非橙色篮筐时取消下一行注释，并改成你的篮筐区域
 # BASKETBALL_HOOP_ROI=0.42,0.25,0.16,0.05
 EOF
@@ -260,10 +274,12 @@ curl -s http://127.0.0.1:8000/api/v1/health
 应该返回：
 
 ```json
-{"status":"ok","service":"basketball-server","version":"0.4.1","detector":"classical"}
+{"status":"ok","service":"basketball-server","version":"0.5.0","detector":"classical","clips":true}
 ```
 
-- `version` 低于 `0.4.1` 或 `detector` 是 `stub`：说明部署的不是最新 `main`，先 `git pull` 再重启，见第 10 节。
+- `version` 低于 `0.5.0` 或 `detector` 是 `stub`：说明部署的不是最新 `main`，先 `git pull` 再重启，见第 10 节。
+- `clips=false`：ffmpeg 不可用或已关闭片段功能；执行 `ffmpeg -version` 检查，
+  或确认 `BASKETBALL_FFMPEG_PATH` 指向可执行文件。识别功能不受影响。
 - 如果启动失败，看日志：`sudo journalctl -u basketball -n 100 --no-pager`。
 
 ### 5.3 Nginx 反向代理
@@ -342,19 +358,22 @@ sudo ufw enable
 
 阿里云安全组和系统防火墙是两层，别只配一层。
 
-### 5.7 清理上传文件（可选，但建议）
+### 5.7 清理上传文件与片段（可选，但建议）
 
-上传目录不会自动回收。按 7 天保留：
+上传目录和片段目录都不会自动回收。按 7 天保留：
 
 ```bash
 sudo tee /etc/cron.daily/basketball-cleanup >/dev/null <<'EOF'
 #!/bin/sh
 find /var/lib/basketball/uploads -type f -mtime +7 -delete
+find /var/lib/basketball/clips -type f -mtime +7 -delete
+find /var/lib/basketball/clips -mindepth 1 -type d -empty -delete
 EOF
 sudo chmod +x /etc/cron.daily/basketball-cleanup
 ```
 
-验证阶段可以先不配，但不要让它无限增长。
+如果片段目录用了别的路径，同步修改 `find` 的路径。片段文件被清理后，App 会显示
+「片段已失效」，识别结果仍可正常查看。
 
 ---
 
@@ -374,8 +393,9 @@ curl -s http://<SERVER>/api/v1/health | jq .
 {
   "status": "ok",
   "service": "basketball-server",
-  "version": "0.4.1",
-  "detector": "classical"
+  "version": "0.5.0",
+  "detector": "classical",
+  "clips": true
 }
 ```
 
@@ -430,24 +450,43 @@ done
 {
   "id": "9bd35456975247deb752faed14110fe2",
   "status": "completed",
+  "stage": null,
   "filename": "test.mp4",
   "created_at": "2026-11-06T00:15:24.776176Z",
   "result": {
     "detector": "classical",
     "shots": [
-      { "timestamp_seconds": 1.5, "frame_index": 45, "made": true }
+      {
+        "timestamp_seconds": 1.5,
+        "frame_index": 45,
+        "made": true,
+        "clip": {
+          "status": "ready",
+          "start_seconds": 0.0,
+          "end_seconds": 6.5,
+          "duration_seconds": 6.5,
+          "size_bytes": 1800000,
+          "url": "/api/v1/analyses/9bd35456975247deb752faed14110fe2/clips/0",
+          "error": null
+        }
+      }
     ],
     "note": null,
+    "clip_note": null,
     "hoop_confidence": 1.0
   },
   "error": null
 }
 ```
 
+- `status=processing` 时 `stage` 可能是 `detecting` 或 `clipping`；完成/失败后为 `null`；
 - `shots[].made = true`：命中；`false`：未中；
+- `shots[].clip.status=ready`：片段已生成；`failed` 时看 `clip.error`；
+- `shots` 按 `timestamp_seconds` 升序，片段接口的 `index` 就是这个数组下标；
 - `timestamp_seconds` 是视频内时间，`frame_index` 是原始视频帧号；
 - `result.note` 非空表示「没有识别到」的原因（例如没检测到篮筐、没跟踪到球），
   这**不是**接口失败；
+- `result.clip_note` 非空表示整体未生成片段（通常是 ffmpeg 不可用/已关闭）；
 - `result.hoop_confidence` 是自动找筐置信度（0-1，手动圈筐时为 1）；低于
   `BASKETBALL_HOOP_MIN_CONFIDENCE` 时服务端不出事件，并在 `note` 里要求手动圈筐。
 
@@ -466,7 +505,31 @@ truncate -s 210M big.mp4
 curl -s -o /dev/null -w '%{http_code}\n' -F "file=@big.mp4;type=video/mp4" http://<SERVER>/api/v1/analyses
 ```
 
-### 6.5 重启行为（任务持久化）
+### 6.5 验证进球片段
+
+```bash
+# 取第一个就绪片段的数组下标
+CLIP_INDEX=$(jq -r '.result.shots | to_entries[] | select(.value.made and .value.clip.status=="ready") | .key' job-status.json | head -n1)
+echo "clip index: $CLIP_INDEX"
+
+# 完整下载：预期 200，文件可被 ffprobe 读取
+curl -s -o clip.mp4 -w '%{http_code}\n' \
+  "http://<SERVER>/api/v1/analyses/$JOB_ID/clips/$CLIP_INDEX"
+ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 clip.mp4
+
+# Range：预期 206，响应头带 Content-Range
+curl -s -o /dev/null -D - -H 'Range: bytes=0-1023' \
+  "http://<SERVER>/api/v1/analyses/$JOB_ID/clips/$CLIP_INDEX" | head -n 20
+```
+
+预期：
+
+- 片段时长约为 `min(t+5, 视频时长) - max(t-5, 0)`，第一球可能不足 10 秒；
+- 完整下载返回 `200`、`Content-Type: video/mp4`；
+- Range 请求返回 `206` 且带 `Content-Range: bytes 0-1023/<size>`；
+- 越界下标返回 `404`；未命中/未生成片段的事件返回 `409`；文件被清理后返回 `404`。
+
+### 6.6 重启行为（任务持久化）
 
 ```bash
 sudo systemctl restart basketball
@@ -599,7 +662,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 2. **长按首页底部的「服务端」状态行**（普通用户看不到这个入口）；
 3. 在开发者设置里填 `http://<公网IP>` 或 `https://你的域名`，保存；
 4. 点一下该行重新检查，应显示在线，并显示版本和检测器，例如
-   `服务端 0.4.1 · 检测器 classical`。
+   `服务端 0.5.0 · 检测器 classical`。
 
 如果服务端用 8080：填 `http://<公网IP>:8080`。
 
@@ -607,9 +670,13 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 1. 首页「开始分析」→「录制视频」或「从相册选择」；
 2. 确认页检查格式/大小/时长，点「开始分析」；
-3. 分析页显示上传进度，随后是排队/识别中；
+3. 分析页显示上传进度，随后是排队/识别中；若服务端在生成片段，会显示「正在生成进球片段…」；
 4. 完成后进入结果页：命中/未中时间点、命中率、视频播放标记；
-5. 结果自动保存到「记录」；即使服务端重启，记录仍可打开。
+5. 结果页「进球片段」卡片可进入播放页；点「保存到相册」，Android 10+ 直接保存，
+   Android 8-9 首次会申请存储权限；
+6. 结果自动保存到「记录」；即使服务端重启，记录仍可打开。
+
+片段需要服务端在线才能播放；被清理后播放页显示「片段已失效」，识别结果不受影响。
 
 如果「服务端」状态显示在线，但上传失败：
 
@@ -623,21 +690,24 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 部署完成后逐项打勾：
 
-- [ ] `GET /api/v1/health` 返回 `version=0.4.1`、`detector=classical`
-- [ ] `GET /docs` 可打开，能看到 `/api/v1/auth/*` 与 `GET /api/v1/analyses`
+- [ ] `GET /api/v1/health` 返回 `version=0.5.0`、`detector=classical`、`clips=true`
+- [ ] `GET /docs` 可打开，能看到 `/api/v1/auth/*`、`GET /api/v1/analyses`
+  与 `GET /api/v1/analyses/{id}/clips/{index}`
 - [ ] 注册、登录、`GET /auth/me`、退出登录均返回预期状态码
 - [ ] 上传一段真实视频返回 `202`，任务最终 `completed`
 - [ ] 清晰命中的球能在 `result.shots` 中出现 `made=true`
+- [ ] 命中事件带 `clip.status=ready`，片段时长约为前后各 5 秒且被视频边界截断
+- [ ] 片段接口完整下载返回 `200`/`video/mp4`，Range 请求返回 `206`
 - [ ] 没有识别到时 `result.note` 给出了可理解的原因
 - [ ] `.txt` 上传返回 `415`
 - [ ] 不存在的任务返回 `404`
 - [ ] 超过 200 MB 返回 `413`
-- [ ] 登录用户的任务列表只包含自己的任务；另一个账号查询该任务返回 `404`
+- [ ] 登录用户的任务列表只包含自己的任务；另一个账号查询该任务/片段返回 `404`
 - [ ] 服务端重启后，已完成任务仍能查询，App 本地历史仍能查看
 - [ ] App 首页「服务端」状态显示在线，版本/检测器正确
-- [ ] App 从录制/相册到结果页全流程走通
+- [ ] App 从录制/相册到结果页全流程走通，片段可播放并保存到相册
 - [ ] 公网只开放必要端口；若用 Nginx，8000 未对公网开放
-- [ ] `BASKETBALL_DB_PATH` 指向持久化目录；上传目录已配置定期清理或已记录待办
+- [ ] `BASKETBALL_DB_PATH` 指向持久化目录；上传目录和片段目录已配置定期清理或已记录待办
 
 ---
 
@@ -645,7 +715,9 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 | 现象 | 可能原因 | 处理 |
 | --- | --- | --- |
-| `detector` 是 `stub` 或 `version` 低于 `0.4.1` | 部署的是旧代码 | `git pull` 最新 `main` 后重启；确认 `server/app/services/db.py` 存在 |
+| `detector` 是 `stub` 或 `version` 低于 `0.5.0` | 部署的是旧代码 | `git pull` 最新 `main` 后重启；确认 `server/app/services/db.py` 存在 |
+| `clips=false` 或片段全部失败 | 没有 ffmpeg、路径不对或版本过旧 | `ffmpeg -version`；设置 `BASKETBALL_FFMPEG_PATH`；重新分析 |
+| 结果页没有片段区 | 识别到的都是未中球、旧任务未生成、或 ffmpeg 不可用 | 看 `result.clip_note`/`clip.status`；旧任务重新分析；装好 ffmpeg 后重新分析 |
 | 502 Bad Gateway | uvicorn 没起来/端口不对 | `systemctl status basketball`、`journalctl -u basketball -n 100`、`curl 127.0.0.1:8000/api/v1/health` |
 | App 显示离线 | 地址错、端口没开、安全组没放行 | 手机浏览器先访问 `http://<SERVER>/api/v1/health`；检查安全组和 Nginx |
 | 健康检查正常，但上传失败 | Nginx 体积/超时限制 | 调大 `client_max_body_size`、`proxy_read_timeout`；看 Nginx error log |
@@ -660,7 +732,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 | 登录返回 `401` | 密码错误，或 token 过期/已退出 | 重新登录；检查 `BASKETBALL_TOKEN_TTL_DAYS` |
 | 打开 `BASKETBALL_REQUIRE_AUTH=true` 后 App 上传 401 | App 还没接登录 | 先保持 `false`，或换用带 `Authorization` 的客户端 |
 | CPU 打满、分析很慢 | 多人同时上传、抽帧率高、视频大 | 单任务串行使用；降低 `BASKETBALL_SAMPLE_FPS`；控制视频时长/分辨率 |
-| 上传文件占满磁盘 | 上传目录未清理 | 配置 5.7 的定时清理，或手动删 `uploads` 下旧文件 |
+| 上传文件/片段占满磁盘 | 上传或片段目录未清理 | 配置 5.7 的定时清理，或手动删 `uploads`/`clips` 下旧文件 |
 
 ---
 
@@ -689,7 +761,7 @@ git checkout <包含该提交的 commit>
 ```
 
 然后按第 4.3 节继续安装依赖、第 5 节配置启动。旧版本没有任务持久化和账号接口，
-第 6.5 节、第 9 节中与 SQLite/登录相关的检查项不适用。
+第 6.6 节、第 9 节中与 SQLite/登录/片段相关的检查项不适用。
 
 ## 附录 B：环境变量速查
 
@@ -711,14 +783,22 @@ git checkout <包含该提交的 commit>
 | `BASKETBALL_DB_PATH` | `<临时目录>/basketball-data/basketball.db` | SQLite 数据库；生产建议 `/var/lib/basketball/data/basketball.db` |
 | `BASKETBALL_REQUIRE_AUTH` | `false` | `true` 时上传/查询/列表都要求登录；App 接入登录前保持 `false` |
 | `BASKETBALL_TOKEN_TTL_DAYS` | `30` | 登录 token 有效天数；`0` 表示不过期 |
+| `BASKETBALL_CLIP_ENABLED` | `true` | 关闭后不生成片段，识别任务照常完成 |
+| `BASKETBALL_CLIP_PRE_SECONDS` / `BASKETBALL_CLIP_POST_SECONDS` | `5` / `5` | 进球前后各截取秒数（0–30） |
+| `BASKETBALL_CLIP_DIR` | `<upload_dir>/clips` | 片段保存目录；生产建议 `/var/lib/basketball/clips` |
+| `BASKETBALL_FFMPEG_PATH` | `ffmpeg` | ffmpeg 可执行文件路径 |
+| `BASKETBALL_CLIP_INCLUDE_MISSES` | `false` | 是否也给未中事件生成片段 |
+| `BASKETBALL_CLIP_MAX_PER_JOB` | `50` | 单任务最多片段数 |
+| `BASKETBALL_CLIP_TIMEOUT_SECONDS` | `120` | 单片段生成超时 |
 
 变量在进程启动时读取，修改后执行 `sudo systemctl restart basketball`。
 
 ## 附录 C：文档验证说明
 
-本文档中的服务端代码路径、57 个服务端测试、`/api/v1/health`、上传/轮询、413/415/404 行为，
-以及注册/登录、任务归属、SQLite 重启持久化，已在本地用同一份代码和依赖实际跑通
-（Python 3.11、OpenCV 4.10、NumPy 1.26）；持久化与账号细节见
-[server-persistence-accounts.md](server-persistence-accounts.md)。
+本文档中的服务端代码路径、服务端测试、`/api/v1/health`、上传/轮询、413/415/404 行为，
+注册/登录、任务归属、SQLite 重启持久化，以及 0.5.0 的片段生成、Range 播放和 `health.clips`，
+已在本地用同一份代码和依赖实际跑通（Python 3.11、OpenCV 4.10、NumPy 1.26、ffmpeg）；
+持久化与账号细节见 [server-persistence-accounts.md](server-persistence-accounts.md)，
+片段细节见 [shot-clips.md](shot-clips.md)。
 systemd/Nginx/阿里云安全组部分按 Ubuntu 24.04 编写，首次部署请按第 9 节逐项验收；
 如果实际环境有差异，以 `journalctl`、`nginx -t` 和健康检查结果为准。

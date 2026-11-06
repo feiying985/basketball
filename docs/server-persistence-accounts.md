@@ -1,6 +1,7 @@
 # 服务端任务持久化与账号体系
 
-> - **适用版本**：`server` 0.3.0（SQLite 持久化 + 账号/Bearer 会话）
+> - **适用版本**：`server` 0.3.0 起（SQLite 持久化 + 账号/Bearer 会话）；0.5.0 增加
+>   任务阶段 `stage` 与片段元数据 `result.shots[].clip`
 > - **更新日期**：2026-11-06
 > - **范围**：本文只描述服务端。安卓 App 目前仍以匿名方式调用分析接口，登录界面与
 >   token 存储尚未接入；服务端默认 `BASKETBALL_REQUIRE_AUTH=false`，因此现有 App 不受影响。
@@ -37,10 +38,14 @@
 | `id` | 任务 ID（32 位十六进制） |
 | `owner_id` | 任务所属用户；匿名为 `NULL` |
 | `status` | `queued` / `processing` / `completed` / `failed` |
+| `stage` | 0.5.0 新增：`detecting` / `clipping` / `NULL`（任务结束） |
 | `filename` | 上传文件名 |
 | `created_at` / `updated_at` | UTC ISO-8601 时间 |
-| `result_json` | 识别结果 JSON（`AnalysisResult`） |
+| `result_json` | 识别结果 + 片段元数据 JSON（`AnalysisResult`） |
 | `error` | 失败原因 |
+
+旧数据库没有 `stage` 列；启动时用 `PRAGMA table_info(jobs)` 检测并 `ALTER TABLE` 补列，
+已有任务和结果不受影响。
 
 ### 2.2 重启语义
 
@@ -138,8 +143,8 @@ token 存储后，生产环境应打开该开关。
 ### 3.5 与现有 App 的兼容性
 
 - 现有 App 不带 `Authorization` 头，默认配置下上传/轮询行为不变。
-- 新增的响应字段（如 token 响应）只出现在新接口；任务响应结构未变，App 的
-  `ignoreUnknownKeys = true` 也不受影响。
+- 0.5.0 的任务响应新增 `stage`、`shots[].clip`、`result.clip_note`；旧 App 的
+  `ignoreUnknownKeys = true` 会忽略它们，旧结果 JSON 没有这些字段也按默认值读取。
 - App 的本地历史仍是本地 Room 快照；接入账号后可以把 `GET /api/v1/analyses` 作为云端历史来源。
 
 ## 4. 本地试用
@@ -189,9 +194,13 @@ cd server && python -m pytest -q
 新增测试覆盖：
 
 - `tests/test_persistence.py`：任务结果跨 store 重建仍存在、按 owner 过滤、启动时把中断任务
-  标记为失败、应用启动生命周期生效。
+  标记为失败、应用启动生命周期生效、`stage` 持久化/中断清空、旧库自动补 `stage` 列。
 - `tests/test_auth.py`：注册/重名/参数校验、登录失败与成功、退出只吊销当前会话、过期与非法
   token、任务仅本人可见、匿名调用兼容、`require_auth` 开关生效。
+- `tests/test_clips.py`、`tests/test_clip_api.py`：片段窗口/ffmpeg 失败路径/真实 ffmpeg、
+  片段接口 200/206/404/409 与跨账号隔离。
+
+片段生成细节见 [shot-clips.md](shot-clips.md)。
 
 测试通过 `tests/conftest.py` 使用独立的临时数据库，不会读写开发者本地数据。
 
@@ -201,7 +210,7 @@ cd server && python -m pytest -q
    落到不同进程，后台任务也缺少重试。扩容前应换 PostgreSQL + 任务队列。
 2. **没有刷新 token / 设备管理 / 密码找回 / 邮箱验证**：当前是最小账号闭环。
 3. **没有登录限流和验证码**：公网暴露前应在 Nginx 或应用层加登录/注册限流。
-4. **上传文件不自动清理**：数据库只持久化任务元数据，不改变上传目录的清理策略。
-5. **App 未接入**：登录界面、token 安全存储、401 自动登出、云端历史同步仍未实现。
-6. **数据库迁移**：当前用 `CREATE TABLE IF NOT EXISTS` 建表，没有版本化迁移；后续改表结构时
-   需要引入 Alembic 或手写迁移脚本。
+4. **上传文件和片段不自动清理**：数据库只持久化任务元数据，不改变上传/片段目录的清理策略。
+5. **App 未接入登录**：登录界面、token 安全存储、401 自动登出、云端历史同步仍未实现。
+6. **数据库迁移**：`CREATE TABLE IF NOT EXISTS` + `stage` 列的针对性 `ALTER TABLE` 只能处理
+   这一列；后续再改表结构时应引入 Alembic 或手写版本化迁移脚本。

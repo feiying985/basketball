@@ -25,6 +25,7 @@ import androidx.navigation.navArgument
 import com.feiying.basketball.R
 import com.feiying.basketball.data.AppContainer
 import com.feiying.basketball.ui.analysis.AnalysisRoute
+import com.feiying.basketball.ui.clip.ClipPlayerRoute
 import com.feiying.basketball.ui.history.HistoryRoute
 import com.feiying.basketball.ui.home.HomeRoute
 import com.feiying.basketball.ui.navigation.Routes
@@ -99,6 +100,20 @@ fun BasketballApp(container: AppContainer) {
                     container = container,
                     navController = navController,
                     recordId = recordId,
+                )
+            }
+            composable(
+                route = Routes.CLIP_PATTERN,
+                arguments = listOf(
+                    navArgument(Routes.RECORD_ID_ARG) { type = NavType.StringType },
+                    navArgument(Routes.CLIP_INDEX_ARG) { type = NavType.IntType },
+                ),
+            ) { entry ->
+                ClipPlayerRoute(
+                    container = container,
+                    navController = navController,
+                    recordId = entry.arguments?.getString(Routes.RECORD_ID_ARG).orEmpty(),
+                    index = entry.arguments?.getInt(Routes.CLIP_INDEX_ARG) ?: -1,
                 )
             }
         }

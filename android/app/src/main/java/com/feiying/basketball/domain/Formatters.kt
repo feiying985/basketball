@@ -29,6 +29,11 @@ object Formatters {
         return String.format(Locale.ROOT, "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 
+    /** Clip length such as `10.0s`; clips are short so seconds are enough. */
+    fun clipDuration(seconds: Double): String {
+        return String.format(Locale.ROOT, "%.1fs", seconds.coerceAtLeast(0.0))
+    }
+
     fun fileSize(bytes: Long): String {
         if (bytes < 1024) return "$bytes B"
         val kb = bytes / 1024.0

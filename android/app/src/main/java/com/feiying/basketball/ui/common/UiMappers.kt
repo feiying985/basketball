@@ -73,7 +73,21 @@ fun ImportErrorReason.message(): String = stringResource(messageResource())
 fun AnalysisRecord.summaryText(): String = when (status) {
     AnalysisStatus.COMPLETED -> {
         if (result != null && result.shots.isNotEmpty()) {
-            stringResource(R.string.history_summary_completed, result.shots.size, result.madeCount)
+            val clipCount = result.readyClipIndexes.size
+            if (clipCount > 0) {
+                stringResource(
+                    R.string.history_summary_completed_with_clips,
+                    result.shots.size,
+                    result.madeCount,
+                    clipCount,
+                )
+            } else {
+                stringResource(
+                    R.string.history_summary_completed,
+                    result.shots.size,
+                    result.madeCount,
+                )
+            }
         } else {
             stringResource(R.string.home_recent_empty_summary)
         }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -136,6 +137,9 @@ fun ResultRoute(
                 ResultContent(
                     record = current,
                     onBack = { navController.popBackStack() },
+                    onOpenClip = { index ->
+                        navController.navigate(Routes.clip(current.localId, index))
+                    },
                     onReanalyze = {
                         navController.popBackStack(Routes.HOME, inclusive = false)
                     },
@@ -165,11 +169,15 @@ fun ResultRoute(
 fun ResultContent(
     record: AnalysisRecord,
     onBack: () -> Unit,
+    onOpenClip: (Int) -> Unit,
     onReanalyze: () -> Unit,
     onDone: () -> Unit,
 ) {
     val result = record.result ?: return
-    val shots = result.shots.sortedBy { it.timestampSeconds }
+    // The server sorts shots by timestamp and clips are indexed by this order;
+    // do not re-sort locally or the clip index would point at another shot.
+    val shots = result.shots
+    val readyClipIndexes = result.readyClipIndexes
     val videoFile = record.localVideoPath?.let(::File)?.takeIf { it.exists() }
     var player by remember { mutableStateOf<ExoPlayer?>(null) }
 
@@ -255,6 +263,41 @@ fun ResultContent(
             }
         }
         if (shots.isNotEmpty()) {
+            if (readyClipIndexes.isNotEmpty()) {
+                item {
+                    Column {
+                        Text(
+                            text = stringResource(
+                                R.string.result_clips_title,
+                                readyClipIndexes.size,
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        LazyRow(
+                            modifier = Modifier.padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            items(readyClipIndexes, key = { it }) { index ->
+                                ClipCard(
+                                    index = index,
+                                    shot = shots[index],
+                                    onClick = { onOpenClip(index) },
+                                )
+                            }
+                        }
+                    }
+                }
+            } else if (result.clipNote != null || result.hasClipAttempt) {
+                item {
+                    Text(
+                        text = result.clipNote?.let {
+                            stringResource(R.string.result_clips_note, it)
+                        } ?: stringResource(R.string.result_clips_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             item {
                 Column {
                     Row(
@@ -288,6 +331,7 @@ fun ResultContent(
                     index = index,
                     shot = shot,
                     onClick = { seekToShot(shot) },
+                    onOpenClip = { onOpenClip(index) },
                 )
             }
         } else {
@@ -412,7 +456,56 @@ private fun EmptyResultCard(note: String?) {
 }
 
 @Composable
-private fun ShotRow(index: Int, shot: ShotEvent, onClick: () -> Unit) {
+private fun ClipCard(index: Int, shot: ShotEvent, onClick: () -> Unit) {
+    val clip = shot.clip ?: return
+    Card(
+        modifier = Modifier
+            .width(160.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        ),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = stringResource(R.string.result_shot_number, index + 1),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
+            Text(
+                text = "${Formatters.shotTime(clip.startSeconds)}–" +
+                    Formatters.shotTime(clip.endSeconds),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Text(
+                text = Formatters.clipDuration(clip.durationSeconds),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShotRow(
+    index: Int,
+    shot: ShotEvent,
+    onClick: () -> Unit,
+    onOpenClip: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -450,6 +543,15 @@ private fun ShotRow(index: Int, shot: ShotEvent, onClick: () -> Unit) {
             },
             modifier = Modifier.padding(start = 6.dp),
         )
+        if (shot.made && shot.clip?.isReady == true) {
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onOpenClip) {
+                Text(
+                    text = stringResource(R.string.result_clip_open),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
     }
 }
 

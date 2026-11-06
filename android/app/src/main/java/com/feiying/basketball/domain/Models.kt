@@ -34,10 +34,33 @@ enum class AnalysisStatus {
 }
 
 @Serializable
+enum class ClipStatus {
+    READY,
+    FAILED,
+    UNKNOWN,
+}
+
+/** A server-generated MP4 covering a shot, or the reason it was not generated. */
+@Serializable
+data class ShotClip(
+    val status: ClipStatus = ClipStatus.UNKNOWN,
+    val startSeconds: Double = 0.0,
+    val endSeconds: Double = 0.0,
+    val durationSeconds: Double = 0.0,
+    val sizeBytes: Long? = null,
+    val url: String? = null,
+    val error: String? = null,
+) {
+    val isReady: Boolean
+        get() = status == ClipStatus.READY && !url.isNullOrBlank()
+}
+
+@Serializable
 data class ShotEvent(
     val timestampSeconds: Double,
     val frameIndex: Int,
     val made: Boolean,
+    val clip: ShotClip? = null,
 )
 
 @Serializable
@@ -45,9 +68,19 @@ data class AnalysisResult(
     val detector: String,
     val shots: List<ShotEvent> = emptyList(),
     val note: String? = null,
+    val clipNote: String? = null,
 ) {
     val madeCount: Int get() = shots.count { it.made }
     val totalCount: Int get() = shots.size
+
+    /** Array indexes of made shots whose clip is ready; the server uses the same order. */
+    val readyClipIndexes: List<Int>
+        get() = shots.indices.filter { index ->
+            val shot = shots[index]
+            shot.made && shot.clip?.isReady == true
+        }
+
+    val hasClipAttempt: Boolean get() = shots.any { it.clip != null }
 }
 
 data class AnalysisRecord(
