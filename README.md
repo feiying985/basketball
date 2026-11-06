@@ -120,6 +120,9 @@ cd android
 分析完成后 `result.shots` 返回识别到的投篮事件（`made=true` 为命中，
 `timestamp_seconds`/`frame_index` 指向球穿过篮筐附近的时刻）。
 `result.note` 在未检测到篮筐、篮球或投篮时说明原因。
+`result.hoop_confidence` 是自动找筐的置信度（0-1，手动圈筐时为 1）：几个橙色候选
+得分接近时它会变低，此时服务端不猜测，直接提示手动圈定篮筐，避免把灯柱/海报当成篮筐
+后返回错误事件。
 
 **当前基线限制**：依赖画面中的橙色篮球和橙色/红色篮筐、假设机位基本固定，
 只识别轨迹经过篮筐附近的投篮（远距离偏出的球可能不报）。算法和调参说明见
@@ -161,7 +164,8 @@ GET  /api/v1/analyses       →  当前账号的历史任务
 | `BASKETBALL_VALUE_MIN` | `50` | 橙色掩码的最小亮度；夜景可降到 40 |
 | `BASKETBALL_BALL_MIN_RADIUS_RATIO` | `0.010` | 球候选的最小半径（相对画面短边） |
 | `BASKETBALL_BALL_MAX_RADIUS_RATIO` | `0.120` | 球候选的最大半径；橙色灯柱/衣物较大时可降到 0.05 |
-| `BASKETBALL_STATIC_PERSISTENCE_THRESHOLD` | `0.50` | 候选点所在区域的持续橙色占比达到该值时视为静止噪声并丢弃 |
+| `BASKETBALL_STATIC_PERSISTENCE_THRESHOLD` | `0.95` | 候选点所在区域的持续橙色占比达到该值时视为静止噪声并丢弃；默认只过滤常亮物体，避免把与篮筐重叠的球一起拒掉 |
+| `BASKETBALL_HOOP_MIN_CONFIDENCE` | `0.25` | 自动找筐的最低置信度（0-1）；低于该值时不出事件，提示手动圈定篮筐；设为 `0` 关闭检查 |
 | `BASKETBALL_MAX_UPLOAD_BYTES` | `209715200` | 单文件上传上限（字节） |
 | `BASKETBALL_UPLOAD_DIR` | 系统临时目录 | 上传视频保存目录 |
 | `BASKETBALL_DB_PATH` | `<临时目录>/basketball-data/basketball.db` | SQLite 数据库文件；生产建议持久化目录 |

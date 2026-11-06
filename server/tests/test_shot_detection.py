@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 from app.services.classical_shot_detection import (
     ClassicalShotDetector,
     ShotDetectionConfig,
     VideoAnalysisError,
+    _ball_candidates,
 )
 from tests.synthetic import write_arc_video, write_dribble_video, write_shot_video
 
@@ -35,6 +39,8 @@ def test_detects_made_shot(tmp_path: Path) -> None:
     made = next(shot for shot in result.shots if shot.made)
     assert 0.0 < made.timestamp_seconds < 2.0
     assert made.frame_index >= 0
+    # A single clear rim is unambiguous.
+    assert result.hoop_confidence == 1.0
 
 
 def test_detects_near_miss(tmp_path: Path) -> None:
@@ -106,6 +112,80 @@ def test_without_static_filter_the_noise_hides_the_ball(tmp_path: Path) -> None:
     result = detector.analyze(video)
 
     assert result.shots == []
+
+
+def test_static_filter_keeps_ball_that_overlaps_the_rim() -> None:
+    """Regression for the second real-video report.
+
+    While the ball overlaps the persistent orange rim, its candidate disk also
+    scores high persistence.  The old 0.50 default rejected exactly those
+    candidates and broke the trajectory at the rim; the 0.95 default keeps them
+    because a truly constant object (lamp post) sits at ~1.0.
+    """
+
+    height, width = 360, 640
+    mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.rectangle(mask, (260, 96), (380, 108), 255, -1)  # thick persistent rim
+    cv2.circle(mask, (320, 102), 12, 255, -1)  # ball touching the rim
+    persistent = np.zeros((height, width), dtype=np.float32)
+    cv2.rectangle(persistent, (260, 96), (380, 108), 1.0, -1)
+
+    default = _ball_candidates(
+        mask,
+        persistent,
+        sample_frame=5,
+        timestamp=0.5,
+        config=ShotDetectionConfig(),
+    )
+    assert any(
+        abs(candidate.x - 320) <= 2 and abs(candidate.y - 102) <= 2
+        for candidate in default
+    )
+
+    aggressive = replace(ShotDetectionConfig(), static_persistence_threshold=0.50)
+    rejected = _ball_candidates(
+        mask,
+        persistent,
+        sample_frame=5,
+        timestamp=0.5,
+        config=aggressive,
+    )
+    assert all(
+        abs(candidate.x - 320) > 2 or abs(candidate.y - 102) > 2
+        for candidate in rejected
+    )
+
+
+def test_ambiguous_auto_hoop_requires_manual_roi(tmp_path: Path) -> None:
+    """An orange bar next to the rim makes auto hoop detection ambiguous."""
+
+    video = tmp_path / "competing-hoop.avi"
+    write_shot_video(video, competing_hoop=True)
+
+    result = _detector().analyze(video)
+
+    assert result.shots == []
+    assert result.note is not None
+    assert "手动" in result.note
+    assert result.hoop_confidence is not None
+    assert result.hoop_confidence < ShotDetectionConfig().hoop_min_confidence
+
+    manual = _detector().analyze(video, hoop_roi=(0.40, 0.26, 0.20, 0.04))
+
+    assert any(shot.made for shot in manual.shots)
+    assert manual.hoop_confidence == 1.0
+
+
+def test_auto_hoop_confidence_can_be_disabled(tmp_path: Path) -> None:
+    video = tmp_path / "competing-hoop-disabled.avi"
+    write_shot_video(video, competing_hoop=True)
+    detector = _detector(hoop_min_confidence=0.0)
+
+    result = detector.analyze(video)
+
+    assert any(shot.made for shot in result.shots)
+    assert result.hoop_confidence is not None
+    assert result.hoop_confidence < 1.0
 
 
 def test_per_request_hoop_roi_overrides_environment(tmp_path: Path) -> None:

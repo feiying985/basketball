@@ -53,11 +53,34 @@ class ShotDetectionConfig:
     # lamp post, a poster, a parked car) are static noise, not the ball.  Their
     # distance-transform peak can be large enough to win one of the eight
     # candidate slots, so they are rejected before the slot allocation.
-    static_persistence_threshold: float = 0.50
+    #
+    # The second real-video verification showed that 0.50 also rejected the
+    # ball while it overlapped the rim (the rim is persistent orange, so the
+    # candidate's disk scored 0.5-0.92 exactly when the shot happened).  Nearly
+    # constant objects sit at ~1.0, so 0.95 keeps filtering lamp posts without
+    # cutting the trajectory at the rim.
+    static_persistence_threshold: float = 0.95
+    # Auto hoop detection is ambiguous when the winning orange region only
+    # barely beats the runner-up (decorative lights, posters).  Then the
+    # analysis asks for a manual hoop instead of reporting events for the wrong
+    # object.  0 disables the check.
+    hoop_min_confidence: float = 0.25
+    # Mild prior for a centrally framed hoop: the App asks users to keep both
+    # the hoop and the shooter in frame, and the real-night video picked a
+    # decorative light pole in the left third over the actual rim at the centre.
+    hoop_center_weight: float = 0.20
     max_track_gap: int = 5
     min_track_points: int = 5
     min_vertical_range_ratio: float = 0.04
     max_analysis_width: int = 640
+
+
+@dataclass(frozen=True)
+class HoopDetection:
+    """Auto-detected hoop plus how clearly it beat the alternatives."""
+
+    hoop: Hoop
+    confidence: float
 
 
 class ClassicalShotDetector:
@@ -148,8 +171,8 @@ class ClassicalShotDetector:
             raise VideoAnalysisError("视频中没有可读取的画面。")
 
         width, height = analysis_size
-        hoop = self._hoop(persistent, width=width, height=height, config=config)
-        if hoop is None:
+        hoop_detection = self._hoop(persistent, width=width, height=height, config=config)
+        if hoop_detection is None:
             return AnalysisResult(
                 detector=self.name,
                 shots=[],
@@ -158,6 +181,25 @@ class ClassicalShotDetector:
                     "或在确认视频时手动圈定篮筐（也可用 BASKETBALL_HOOP_ROI 指定）。"
                 ),
             )
+        hoop_confidence = round(hoop_detection.confidence, 3)
+        if (
+            config.hoop_min_confidence > 0.0
+            and config.hoop_roi is None
+            and hoop_detection.confidence < config.hoop_min_confidence
+        ):
+            # Returning events for a different orange object is worse than
+            # asking for the hoop region the App already lets users draw.
+            return AnalysisResult(
+                detector=self.name,
+                shots=[],
+                hoop_confidence=hoop_confidence,
+                note=(
+                    "自动找筐置信度不足：画面中可能有多个橙色物体（灯柱、海报等），"
+                    "无法确定真正的篮筐。请在 App 确认视频时手动圈定篮筐，"
+                    "或设置 BASKETBALL_HOOP_ROI 后重试。"
+                ),
+            )
+        hoop = hoop_detection.hoop
 
         tracks = build_tracks(
             detections,
@@ -172,6 +214,7 @@ class ClassicalShotDetector:
                 detector=self.name,
                 shots=[],
                 note="未检测到可跟踪的篮球：当前基线依赖橙色球的颜色特征。",
+                hoop_confidence=hoop_confidence,
             )
 
         events = detect_shot_events(
@@ -185,6 +228,7 @@ class ClassicalShotDetector:
                 detector=self.name,
                 shots=[],
                 note="检测到篮球轨迹，但未识别到经过篮筐的投篮。",
+                hoop_confidence=hoop_confidence,
             )
 
         shots = [
@@ -195,7 +239,11 @@ class ClassicalShotDetector:
             )
             for event in events
         ]
-        return AnalysisResult(detector=self.name, shots=shots)
+        return AnalysisResult(
+            detector=self.name,
+            shots=shots,
+            hoop_confidence=hoop_confidence,
+        )
 
     def _hoop(
         self,
@@ -204,14 +252,17 @@ class ClassicalShotDetector:
         width: int,
         height: int,
         config: ShotDetectionConfig,
-    ) -> Hoop | None:
+    ) -> HoopDetection | None:
         if config.hoop_roi is not None:
             x, y, roi_width, roi_height = config.hoop_roi
-            return Hoop(
-                center_x=(x + roi_width / 2.0) * width,
-                center_y=(y + roi_height / 2.0) * height,
-                width=roi_width * width,
-                height=roi_height * height,
+            return HoopDetection(
+                hoop=Hoop(
+                    center_x=(x + roi_width / 2.0) * width,
+                    center_y=(y + roi_height / 2.0) * height,
+                    width=roi_width * width,
+                    height=roi_height * height,
+                ),
+                confidence=1.0,
             )
         return _find_hoop(persistent, width=width, height=height, config=config)
 
@@ -340,7 +391,7 @@ def _find_hoop(
     width: int,
     height: int,
     config: ShotDetectionConfig,
-) -> Hoop | None:
+) -> HoopDetection | None:
     mask = (persistent >= config.hoop_persistence).astype(np.uint8) * 255
     mask = cv2.morphologyEx(
         mask,
@@ -349,7 +400,7 @@ def _find_hoop(
     )
 
     contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    best: tuple[float, tuple[int, int, int, int]] | None = None
+    scored: list[tuple[float, tuple[int, int, int, int]]] = []
     for contour in contours:
         area = cv2.contourArea(contour)
         if area < 0.0004 * width * height:
@@ -368,16 +419,33 @@ def _find_hoop(
         persistence = float(region.mean())
         width_score = min(candidate_width / (0.15 * width), 1.5)
         position_score = 1.0 - 0.5 * abs(center_y / height - 0.3)
-        score = persistence * (0.5 + width_score) * (0.5 + position_score)
-        if best is None or score > best[0]:
-            best = (score, (x, y, candidate_width, candidate_height))
+        center_x = x + candidate_width / 2.0
+        # The user is asked to keep the hoop and the shooter in frame, so a
+        # region in the left/right third is a weaker hoop candidate than a
+        # centred one.  This is a tie-breaker, not a hard rule.
+        centrality = 1.0 - min(abs(center_x / width - 0.5) * 2.0, 1.0)
+        center_factor = (1.0 - config.hoop_center_weight) + (
+            config.hoop_center_weight * centrality
+        )
+        score = persistence * (0.5 + width_score) * (0.5 + position_score) * center_factor
+        scored.append((score, (x, y, candidate_width, candidate_height)))
 
-    if best is None:
+    if not scored:
         return None
-    x, y, candidate_width, candidate_height = best[1]
-    return Hoop(
-        center_x=x + candidate_width / 2.0,
-        center_y=y + candidate_height / 2.0,
-        width=float(candidate_width),
-        height=float(max(candidate_height, 2)),
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, (x, y, candidate_width, candidate_height) = scored[0]
+    if len(scored) > 1:
+        runner_up = scored[1][0]
+        margin = (best_score - runner_up) / best_score if best_score > 0 else 0.0
+        confidence = min(max(margin, 0.0), 1.0)
+    else:
+        confidence = 1.0
+    return HoopDetection(
+        hoop=Hoop(
+            center_x=x + candidate_width / 2.0,
+            center_y=y + candidate_height / 2.0,
+            width=float(candidate_width),
+            height=float(max(candidate_height, 2)),
+        ),
+        confidence=confidence,
     )

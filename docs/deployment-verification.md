@@ -1,12 +1,16 @@
 # 后端部署与进球识别验证指引
 
-> - **适用代码**：`server` 0.3.0（经典 CV 检测器 + SQLite 任务持久化 + 账号体系）；安卓端为 `main` 上的 App MVP。
+> - **适用代码**：`server` 0.4.1（经典 CV 检测器 + SQLite 任务持久化 + 账号体系）；安卓端为 `main` 上的 App MVP。
 > - **更新日期**：2026-11-06
 > - **目标环境**：阿里云 ECS（Ubuntu 24.04 LTS，2 vCPU / 2 GB 起）
 > - **文档定位**：把「部署后端 → 验证接口 → 验证进球识别 → 用 App 走通全流程」串成一次可执行的验收；同时说明当前完成度和还缺的功能。
 > - **0.3.0 变更**：任务状态与结果写入 SQLite（重启不丢），新增注册/登录/Bearer token 与任务归属。
 >   默认 `BASKETBALL_REQUIRE_AUTH=false`，现有 App 不需要改；设计与接口见
 >   [server-persistence-accounts.md](server-persistence-accounts.md)。
+> - **0.4.x 变更**：颜色/半径/静止噪声阈值全部可用环境变量调整，支持请求级
+>   `hoop_roi` 与 App 手动圈筐；0.4.1 把静止噪声默认阈值改为 0.95（球与篮筐
+>   重叠时不再被误删），并新增自动找筐置信度检查：多个橙色候选接近时提示手动圈筐，
+>   不再用错误的篮筐返回事件。算法细节见 [shot-detection.md](shot-detection.md)。
 
 ## 0. 先回答两个问题
 
@@ -14,8 +18,8 @@
 
 **可以。`main` 已包含经典 CV 检测器（PR #2 已合入）。**
 
-- 0.3.0 默认 `BASKETBALL_DETECTOR=classical`，任务完成时会返回 `result.shots`；
-- 部署后先确认 `GET /api/v1/health` 返回 `version=0.3.0`、`detector=classical`。如果
+- 0.4.1 默认 `BASKETBALL_DETECTOR=classical`，任务完成时会返回 `result.shots`；
+- 部署后先确认 `GET /api/v1/health` 返回 `version=0.4.1`、`detector=classical`。如果
   `detector` 是 `stub` 或版本更旧，说明代码不是最新 `main`，先 `git pull` 再重启；
 - 仍想复现 PR #2 合入前的行为时，可检出对应历史提交；[附录 A](#附录-a不合并-main-也能验证)
   保留为历史说明，正常部署不再需要。
@@ -36,9 +40,9 @@
 | 安卓端交互流程设计稿 | 🟡 待合入 | PR #3，README 冲突已解决，设计文档，不影响本次部署验证 |
 | 真实场地准确率评估与调参 | ❌ 未做 | 需要真实视频样本；当前只有合成视频测试 |
 | 结果人工纠正（命中/未中） | ❌ 未做 | 设计里放在 P1 |
-| 服务端任务持久化 | ✅ 已完成 | 0.3.0 使用 SQLite，重启后已完成任务仍可查询 |
+| 服务端任务持久化 | ✅ 已完成 | 0.3.0 起使用 SQLite，重启后已完成任务仍可查询 |
 | 任务队列 / 断点续跑 | ❌ 未做 | 分析仍是进程内任务；重启时未完成任务标记为 `failed` |
-| 账号体系（注册/登录/token/任务归属） | 🟡 服务端已完成 | 0.3.0 已提供接口；App 登录与云端历史未接入 |
+| 账号体系（注册/登录/token/任务归属） | 🟡 服务端已完成 | 0.3.0 起已提供接口；App 登录与云端历史未接入 |
 | 限流 / HTTPS / 上传文件清理 | ❌ 未做 | 公网长期运行前需要补；上传文件目前不自动删除 |
 | 云端历史 / 多设备同步 | ❌ 未做 | 服务端已有任务列表接口，App 仍只有本地 Room 历史 |
 | 端侧实时识别 | ❌ 未做 | 规划在第二阶段（TFLite / NCNN） |
@@ -47,7 +51,7 @@
 按优先级展开：
 
 - **P0（让这次验证真正有意义）**
-  1. 确认部署的是 `main` 0.3.0（健康检查 `version=0.3.0`、`detector=classical`）；
+  1. 确认部署的是 `main` 0.4.1（健康检查 `version=0.4.1`、`detector=classical`）；
   2. 用真实球场视频跑一批样本，记录「实际命中 vs 识别命中」，作为第一版评估集。
 - **P1（让 MVP 可日常使用）**
   1. 结果人工纠正（本地覆盖 `made`，不写回服务端）；
@@ -84,7 +88,7 @@ FastAPI + OpenCV 经典 CV 检测器
 1. **仍建议单进程**。任务和账号已持久化到 SQLite，但后台分析仍用 FastAPI `BackgroundTasks`
    在 API 进程内执行，没有持久队列和重试。`uvicorn --workers` 先保持 `1`；需要多实例时先换
    任务队列（Celery/RQ + Redis 或 PostgreSQL），不要只调 worker 数。
-2. **默认没有强制鉴权**。0.3.0 已提供账号与 Bearer token，但 `BASKETBALL_REQUIRE_AUTH`
+2. **默认没有强制鉴权**。0.3.0 起已提供账号与 Bearer token，但 `BASKETBALL_REQUIRE_AUTH`
    默认为 `false`，以便现有 App 不改代码即可使用。验证期间请用安全组限制来源 IP；接好 App
    登录后把该变量设为 `true`，并在 Nginx/应用层补登录限流。
 3. **上传文件不会自动删除**。每次分析都会在 `BASKETBALL_UPLOAD_DIR` 留一份原视频；
@@ -176,7 +180,7 @@ sudo -u basketball git clone https://github.com/feiying985/basketball.git /opt/b
 cd /opt/basketball/app
 git log --oneline -3
 ls server/app/services/classical_shot_detection.py   # 经典 CV 检测器
-ls server/app/services/db.py                         # 0.3.0 SQLite 持久化
+ls server/app/services/db.py                         # 0.3.0+ SQLite 持久化
 ```
 
 ### 4.3 创建虚拟环境并安装依赖
@@ -256,10 +260,10 @@ curl -s http://127.0.0.1:8000/api/v1/health
 应该返回：
 
 ```json
-{"status":"ok","service":"basketball-server","version":"0.3.0","detector":"classical"}
+{"status":"ok","service":"basketball-server","version":"0.4.1","detector":"classical"}
 ```
 
-- `version` 低于 `0.3.0` 或 `detector` 是 `stub`：说明部署的不是最新 `main`，先 `git pull` 再重启，见第 10 节。
+- `version` 低于 `0.4.1` 或 `detector` 是 `stub`：说明部署的不是最新 `main`，先 `git pull` 再重启，见第 10 节。
 - 如果启动失败，看日志：`sudo journalctl -u basketball -n 100 --no-pager`。
 
 ### 5.3 Nginx 反向代理
@@ -370,7 +374,7 @@ curl -s http://<SERVER>/api/v1/health | jq .
 {
   "status": "ok",
   "service": "basketball-server",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "detector": "classical"
 }
 ```
@@ -433,7 +437,8 @@ done
     "shots": [
       { "timestamp_seconds": 1.5, "frame_index": 45, "made": true }
     ],
-    "note": null
+    "note": null,
+    "hoop_confidence": 1.0
   },
   "error": null
 }
@@ -442,7 +447,9 @@ done
 - `shots[].made = true`：命中；`false`：未中；
 - `timestamp_seconds` 是视频内时间，`frame_index` 是原始视频帧号；
 - `result.note` 非空表示「没有识别到」的原因（例如没检测到篮筐、没跟踪到球），
-  这**不是**接口失败。
+  这**不是**接口失败；
+- `result.hoop_confidence` 是自动找筐置信度（0-1，手动圈筐时为 1）；低于
+  `BASKETBALL_HOOP_MIN_CONFIDENCE` 时服务端不出事件，并在 `note` 里要求手动圈筐。
 
 ### 6.4 边界检查
 
@@ -467,7 +474,7 @@ sleep 2
 curl -s "http://<SERVER>/api/v1/analyses/$JOB_ID" | jq '{status, result, error}'
 ```
 
-- 已完成的任务：仍返回原状态和 `result`（0.3.0 写入 SQLite，不再是 404）。
+- 已完成的任务：仍返回原状态和 `result`（0.3.0 起写入 SQLite，不再是 404）。
 - 重启时仍在 `queued`/`processing` 的任务：返回 `status=failed`，`error` 为
   `服务重启导致任务中断，请重新上传视频`。
 - 这是「状态持久化」，不是「任务续跑」；需要续跑见第 11 节的任务队列建议。
@@ -511,6 +518,12 @@ curl -s "http://<SERVER>/api/v1/analyses/$JOB_ID" | jq '{status, result, error}'
 | `BASKETBALL_SAMPLE_FPS` | `10` | 球速快/画面大导致漏帧时调到 15–20；CPU 吃紧时降到 5–8 |
 | `BASKETBALL_SHOT_COOLDOWN_SECONDS` | `1.5` | 同一球被重复计数时调大；连续补篮被合并时调小 |
 | `BASKETBALL_HOOP_ROI` | 空 | 篮筐不是橙色/红色，或自动检测到错误区域时手动指定 |
+| `BASKETBALL_HOOP_MIN_CONFIDENCE` | `0.25` | 自动找筐置信度低于该值时提示手动圈筐；设为 `0` 关闭检查 |
+| `BASKETBALL_HUE_MIN` / `BASKETBALL_HUE_MAX` | `0` / `38` | 橙色掩码色相范围；夜景偏黄时上限可调到 40–45 |
+| `BASKETBALL_SATURATION_MIN` | `70` | 最小饱和度；运动模糊掉色时可降到 45 |
+| `BASKETBALL_VALUE_MIN` | `50` | 最小亮度；夜景可降到 40 |
+| `BASKETBALL_BALL_MAX_RADIUS_RATIO` | `0.120` | 球候选最大半径；橙色灯柱较大时降到 0.05 |
+| `BASKETBALL_STATIC_PERSISTENCE_THRESHOLD` | `0.95` | 静止噪声过滤阈值；过低会把与篮筐重叠的球一起删掉 |
 | `BASKETBALL_DETECTOR` | `classical` | 只想测接口、不想跑 CV 时设为 `stub` |
 
 **`BASKETBALL_HOOP_ROI` 怎么算**：在视频截图上量出篮筐外接矩形（像素），再分别除以画面宽高，
@@ -540,7 +553,9 @@ BASKETBALL_VALUE_MIN=40
 BASKETBALL_BALL_MAX_RADIUS_RATIO=0.05
 ```
 
-这些参数默认保持基线值，按现场视频逐步调整即可。
+这些参数默认保持基线值，按现场视频逐步调整即可。静止噪声阈值默认已是 0.95
+（0.4.1 起，避免球贴筐时被误删）；橙色灯柱/海报多的夜景建议直接手动圈筐，
+或把 `BASKETBALL_HOOP_MIN_CONFIDENCE` 保留默认值，让服务端在找筐歧义时明确提示。
 
 ### 7.4 识别结果的预期
 
@@ -584,7 +599,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 2. **长按首页底部的「服务端」状态行**（普通用户看不到这个入口）；
 3. 在开发者设置里填 `http://<公网IP>` 或 `https://你的域名`，保存；
 4. 点一下该行重新检查，应显示在线，并显示版本和检测器，例如
-   `服务端 0.3.0 · 检测器 classical`。
+   `服务端 0.4.1 · 检测器 classical`。
 
 如果服务端用 8080：填 `http://<公网IP>:8080`。
 
@@ -608,7 +623,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 部署完成后逐项打勾：
 
-- [ ] `GET /api/v1/health` 返回 `version=0.3.0`、`detector=classical`
+- [ ] `GET /api/v1/health` 返回 `version=0.4.1`、`detector=classical`
 - [ ] `GET /docs` 可打开，能看到 `/api/v1/auth/*` 与 `GET /api/v1/analyses`
 - [ ] 注册、登录、`GET /auth/me`、退出登录均返回预期状态码
 - [ ] 上传一段真实视频返回 `202`，任务最终 `completed`
@@ -630,7 +645,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 | 现象 | 可能原因 | 处理 |
 | --- | --- | --- |
-| `detector` 是 `stub` 或 `version` 低于 `0.3.0` | 部署的是旧代码 | `git pull` 最新 `main` 后重启；确认 `server/app/services/db.py` 存在 |
+| `detector` 是 `stub` 或 `version` 低于 `0.4.1` | 部署的是旧代码 | `git pull` 最新 `main` 后重启；确认 `server/app/services/db.py` 存在 |
 | 502 Bad Gateway | uvicorn 没起来/端口不对 | `systemctl status basketball`、`journalctl -u basketball -n 100`、`curl 127.0.0.1:8000/api/v1/health` |
 | App 显示离线 | 地址错、端口没开、安全组没放行 | 手机浏览器先访问 `http://<SERVER>/api/v1/health`；检查安全组和 Nginx |
 | 健康检查正常，但上传失败 | Nginx 体积/超时限制 | 调大 `client_max_body_size`、`proxy_read_timeout`；看 Nginx error log |
@@ -639,6 +654,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 | `note`: 未检测到篮筐 | 篮筐不是橙色/红色，或镜头晃动导致没有持续区域 | 用橙色/红色篮筐；设置 `BASKETBALL_HOOP_ROI`；固定机位 |
 | `note`: 未检测到可跟踪的篮球 | 球不是橙色、太小、光线差 | 换橙色球；靠近拍摄；提高 `BASKETBALL_SAMPLE_FPS` |
 | `note`: 检测到轨迹但未识别到投篮 | 投篮轨迹不经过筐口附近，或机位角度问题 | 调整机位让篮筐和球轨迹可见；检查 ROI；远距离偏出属于已知限制 |
+| `note`: 自动找筐置信度不足 | 画面里有多个相似的橙色物体（灯柱/海报），自动找筐无法确定 | 在 App 里手动圈定篮筐，或设置 `BASKETBALL_HOOP_ROI`；确认无误可在服务端调低 `BASKETBALL_HOOP_MIN_CONFIDENCE` |
 | 任务 `failed`：无法打开视频 | 编码不受支持/文件损坏 | 用 `ffmpeg` 转 H.264 MP4：`ffmpeg -i in.mov -c:v libx264 -pix_fmt yuv420p out.mp4` |
 | 服务重启后未完成任务变成 `failed` | 分析是进程内任务，重启不会续跑 | 属预期；重新上传。已完成任务不受影响 |
 | 登录返回 `401` | 密码错误，或 token 过期/已退出 | 重新登录；检查 `BASKETBALL_TOKEN_TTL_DAYS` |
@@ -683,6 +699,13 @@ git checkout <包含该提交的 commit>
 | `BASKETBALL_SAMPLE_FPS` | `10` | 抽帧率，越高越准也越慢 |
 | `BASKETBALL_SHOT_COOLDOWN_SECONDS` | `1.5` | 两次投篮判定的最小间隔，避免同一球重复计数 |
 | `BASKETBALL_HOOP_ROI` | 空 | 手动篮筐区域，格式 `x,y,width,height`（0–1 归一化） |
+| `BASKETBALL_HOOP_MIN_CONFIDENCE` | `0.25` | 自动找筐最低置信度；低于该值提示手动圈筐，`0` 关闭检查 |
+| `BASKETBALL_HUE_MIN` / `BASKETBALL_HUE_MAX` | `0` / `38` | 橙色掩码色相范围（OpenCV 0–179） |
+| `BASKETBALL_SATURATION_MIN` | `70` | 橙色掩码最小饱和度 |
+| `BASKETBALL_VALUE_MIN` | `50` | 橙色掩码最小亮度 |
+| `BASKETBALL_BALL_MIN_RADIUS_RATIO` | `0.010` | 球候选最小半径（相对画面短边） |
+| `BASKETBALL_BALL_MAX_RADIUS_RATIO` | `0.120` | 球候选最大半径（相对画面短边） |
+| `BASKETBALL_STATIC_PERSISTENCE_THRESHOLD` | `0.95` | 静止橙色噪声过滤阈值 |
 | `BASKETBALL_MAX_UPLOAD_BYTES` | `209715200`（200 MB） | 单文件上传上限 |
 | `BASKETBALL_UPLOAD_DIR` | 系统临时目录 | 上传视频保存目录；生产建议 `/var/lib/basketball/uploads` |
 | `BASKETBALL_DB_PATH` | `<临时目录>/basketball-data/basketball.db` | SQLite 数据库；生产建议 `/var/lib/basketball/data/basketball.db` |
@@ -693,7 +716,7 @@ git checkout <包含该提交的 commit>
 
 ## 附录 C：文档验证说明
 
-本文档中的服务端代码路径、39 个服务端测试、`/api/v1/health`、上传/轮询、413/415/404 行为，
+本文档中的服务端代码路径、57 个服务端测试、`/api/v1/health`、上传/轮询、413/415/404 行为，
 以及注册/登录、任务归属、SQLite 重启持久化，已在本地用同一份代码和依赖实际跑通
 （Python 3.11、OpenCV 4.10、NumPy 1.26）；持久化与账号细节见
 [server-persistence-accounts.md](server-persistence-accounts.md)。

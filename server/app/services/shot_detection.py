@@ -78,6 +78,7 @@ def create_detector() -> ShotDetector:
                 ball_min_radius_ratio=settings.ball_min_radius_ratio,
                 ball_max_radius_ratio=settings.ball_max_radius_ratio,
                 static_persistence_threshold=settings.static_persistence_threshold,
+                hoop_min_confidence=settings.hoop_min_confidence,
             )
         )
     raise ValueError(
