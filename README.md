@@ -2,11 +2,14 @@
 
 安卓端 + 服务端 monorepo，目标是把「打篮球 → 录制视频 → 自动识别进球」做成可用的 MVP。
 
-> **当前状态：App 端 MVP 主流程已实现，服务端已接入经典 CV 进球识别基线。**
+> **当前状态：App 端 MVP 主流程已实现，服务端已接入经典 CV 进球识别基线、任务持久化与账号体系。**
 > 安卓端支持录制/相册选择、视频校验、上传与轮询、结果页和本地历史记录；
-> 服务端基于 OpenCV 做颜色检测 + 轨迹 + 穿筐判定，无需模型文件即可运行。
+> 服务端基于 OpenCV 做颜色检测 + 轨迹 + 穿筐判定，无需模型文件即可运行；
+> 分析任务和账号保存到 SQLite，重启不丢结果，并支持注册/登录与任务归属
+> （默认不强制登录，现有 App 无需改动）。
 > GitHub 现成方案调研见 [docs/research/shot-recognition.md](docs/research/shot-recognition.md)，
-> 算法与限制见 [docs/shot-detection.md](docs/shot-detection.md)。
+> 算法与限制见 [docs/shot-detection.md](docs/shot-detection.md)，
+> 持久化与账号设计见 [docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)。
 
 ## 目录结构
 
@@ -19,11 +22,15 @@
 │       └── data/             # HTTP、Room、视频导入、设置
 ├── server/                   # 服务端（Python 3.11 + FastAPI）
 │   ├── app/
-│   │   ├── api/routes.py     # HTTP 接口
-│   │   ├── services/         # 任务存储、分析流程、跟踪/判定/检测器
+│   │   ├── api/              # HTTP 路由与鉴权依赖
+│   │   ├── services/         # SQLite、账号、任务、分析流程、检测器
 │   │   └── schemas.py        # 请求/响应模型
 │   └── tests/
-├── docs/                     # 进球识别方案调研 + 算法说明
+├── docs/
+│   ├── research/             # 进球识别方案调研
+│   ├── shot-detection.md     # 算法与限制说明
+│   ├── server-persistence-accounts.md  # 任务持久化与账号体系
+│   └── deployment-verification.md  # 部署与验证指引
 └── .github/workflows/        # 服务端测试 + 安卓构建 CI
 ```
 
@@ -45,6 +52,11 @@
 
 MVP 先做**服务端离线分析**：App 只负责采集/上传，识别逻辑全部放在 Python 服务端，便于快速迭代模型。
 端侧实时识别放到后续阶段。
+
+任务状态、识别结果和账号保存在服务端 SQLite 中，服务重启后仍可查询；登录用户的任务与账号绑定，
+不同账号之间互相不可见。默认不强制登录，以兼容现有 App，生产环境可通过
+`BASKETBALL_REQUIRE_AUTH=true` 打开强制鉴权。设计细节见
+[docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)。
 
 ## App 端流程
 
@@ -93,7 +105,12 @@ cd android
 | --- | --- | --- |
 | `GET` | `/api/v1/health` | 健康检查，返回服务版本与当前检测器名称 |
 | `POST` | `/api/v1/analyses` | 上传视频（multipart 字段 `file`），创建分析任务，返回 `202` |
+| `GET` | `/api/v1/analyses` | 当前用户的任务列表（需要登录） |
 | `GET` | `/api/v1/analyses/{id}` | 查询任务状态与识别结果 |
+| `POST` | `/api/v1/auth/register` | 注册并返回 Bearer token |
+| `POST` | `/api/v1/auth/login` | 登录并返回 Bearer token |
+| `GET` | `/api/v1/auth/me` | 当前登录用户 |
+| `POST` | `/api/v1/auth/logout` | 吊销当前 token |
 
 任务状态：`queued → processing → completed / failed`。
 
@@ -108,6 +125,24 @@ cd android
 支持格式：`.mp4`、`.mov`、`.m4v`、`.webm`、`.avi`、`.mkv`；单文件默认上限 200 MB
 （可用 `BASKETBALL_MAX_UPLOAD_BYTES` 调整，上传目录可用 `BASKETBALL_UPLOAD_DIR` 调整）。
 
+### 账号与持久化
+
+```text
+POST /api/v1/auth/register  →  { access_token, user }
+Authorization: Bearer <token>
+POST /api/v1/analyses       →  任务归属当前账号
+GET  /api/v1/analyses       →  当前账号的历史任务
+```
+
+- 任务状态与识别结果写入 SQLite，重启后 `completed`/`failed` 的任务仍可查询；
+- 重启时仍处于 `queued`/`processing` 的任务会标记为 `failed`（分析是进程内任务，不支持续跑）；
+- 密码用 scrypt 加盐哈希，token 只在数据库保存 SHA-256 摘要，默认 30 天过期；
+- 默认 `BASKETBALL_REQUIRE_AUTH=false`：不带 token 仍可上传/查询，便于现有 App 使用；
+  设为 `true` 后分析相关接口都要求登录。
+
+完整接口、数据表、重启语义与限制见
+[docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)。
+
 ### 检测器配置
 
 服务端通过环境变量配置检测器（都有默认值，可不设置）：
@@ -120,6 +155,9 @@ cd android
 | `BASKETBALL_HOOP_ROI` | 空 | 手动指定篮筐区域，格式 `x,y,width,height`（0-1 归一化）；用于白色/非橙色篮筐 |
 | `BASKETBALL_MAX_UPLOAD_BYTES` | `209715200` | 单文件上传上限（字节） |
 | `BASKETBALL_UPLOAD_DIR` | 系统临时目录 | 上传视频保存目录 |
+| `BASKETBALL_DB_PATH` | `<临时目录>/basketball-data/basketball.db` | SQLite 数据库文件；生产建议持久化目录 |
+| `BASKETBALL_REQUIRE_AUTH` | `false` | `true` 时分析相关接口都要求 Bearer token |
+| `BASKETBALL_TOKEN_TTL_DAYS` | `30` | 登录 token 有效天数；`0` 表示不过期 |
 
 例如白色篮筐的球场：
 
@@ -145,8 +183,10 @@ CI 会在 PR 上分别运行服务端测试和安卓构建：
    YOLO/RT-DETR 检测篮球/篮筐 → ByteTrack 跟踪 → 轨迹穿筐判定，替换 `ClassicalShotDetector`。
    技术路线与候选项目见 [调研文档](docs/research/shot-recognition.md)。
 2. **结果人工纠正**：在结果页本地覆盖命中/未中，不写回服务端（P1）。
-3. **数据集与评估**：公开数据集冷启动 + 自采场地数据微调，建立逐球准确率评估集。
-4. **端侧实时**：TFLite / NCNN 集成（第二阶段）。
+3. **账号接入 App 与任务队列**：服务端已提供注册/登录、任务列表和持久化结果；下一步在 App
+   增加登录与 token 存储，并把 `BackgroundTasks` 换成可持久化的队列（多实例部署前必须做）。
+4. **数据集与评估**：公开数据集冷启动 + 自采场地数据微调，建立逐球准确率评估集。
+5. **端侧实时**：TFLite / NCNN 集成（第二阶段）。
 
 ## 技术选型说明
 
