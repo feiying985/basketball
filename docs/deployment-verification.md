@@ -667,7 +667,7 @@ sudo -u basketball git checkout pr-2
 
 ## 附录 C：文档验证说明
 
-本文档中的服务端代码路径、22 个服务端测试、`/api/v1/health`、上传/轮询、415/404 行为，
+本文档中的服务端代码路径、22 个服务端测试、`/api/v1/health`、上传/轮询、413/415/404 行为，
 已在本地用同一份代码和依赖实际跑通（Python 3.11、OpenCV 4.10、NumPy 1.26）。
 systemd/Nginx/阿里云安全组部分按 Ubuntu 24.04 编写，首次部署请按第 9 节逐项验收；
 如果实际环境有差异，以 `journalctl`、`nginx -t` 和健康检查结果为准。
