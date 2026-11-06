@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class JobStatus(str, Enum):
@@ -41,3 +41,31 @@ class HealthResponse(BaseModel):
     service: str
     version: str
     detector: str
+
+
+class User(BaseModel):
+    id: str
+    username: str
+    created_at: datetime
+
+
+class Credentials(BaseModel):
+    username: str = Field(..., min_length=3, max_length=32)
+    password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def _normalize_username(cls, value: str) -> str:
+        username = value.strip()
+        if len(username) < 3:
+            raise ValueError("用户名至少需要 3 个字符")
+        if any(character.isspace() for character in username):
+            raise ValueError("用户名不能包含空白字符")
+        return username
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime | None = None
+    user: User
