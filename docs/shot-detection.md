@@ -44,8 +44,10 @@ ShotEvent[]（时间戳、原始帧号、made）
    - 轮廓内平均持续度 ≥ 0.5。
 4. 取得分最高的区域作为篮筐开口：中心 `(cx, cy)`、宽度、厚度。
 
-如果篮筐不是橙色/红色（例如白色篮筐），可用 `BASKETBALL_HOOP_ROI=x,y,w,h`
-手动指定归一化区域，跳过自动检测。
+如果篮筐不是橙色/红色（例如白色篮筐），可在 App 确认视频时手动框选篮筐，
+上传时以 `hoop_roi=x,y,w,h` 表单字段提交；也可以在服务端用
+`BASKETBALL_HOOP_ROI=x,y,w,h` 指定归一化区域，跳过自动检测。App 的框选只对
+当次分析生效，服务端环境变量则对全部请求生效。
 
 ## 4. 篮球检测
 
@@ -60,6 +62,18 @@ ShotEvent[]（时间戳、原始帧号、made）
 
 候选还需要满足画面最小边 1%–12% 的半径范围，避免把大面积橙色衣服/地板
 当成球。每帧最多保留 8 个候选，交给跟踪阶段筛选。
+
+真实夜景视频暴露了一个合成视频里没有的问题：橙色灯柱、广告海报和球员肤色
+会形成半径 17–38px 的大色块，按半径排序时把真实球（r≈8px）挤出候选名额。
+因此候选点还要通过**静止噪声过滤**：
+
+- 持续掩码用第一帧初始化，之后按指数加权累积；
+- 对每个候选点取半径大小的圆盘，计算圆盘内的平均持续度；
+- 平均持续度 ≥ `BASKETBALL_STATIC_PERSISTENCE_THRESHOLD`（默认 0.5）说明该
+  位置长期是橙色物体，直接丢弃。球在移动，持续度通常只有 0.1–0.3；短暂停留
+  在弧顶也不会超过阈值。
+
+这样静止的灯柱/海报不会再占用 8 个候选名额，真实球在夜景下也能进入跟踪。
 
 ## 5. 跟踪
 
@@ -127,6 +141,13 @@ python -m pytest -q
 | `BASKETBALL_SAMPLE_FPS` | 抽帧率；球速快/画面大时适当提高 |
 | `BASKETBALL_SHOT_COOLDOWN_SECONDS` | 同一球重复计数与连续补篮的取舍 |
 | `BASKETBALL_HOOP_ROI` | 非橙色篮筐的手动区域 |
+| `BASKETBALL_HUE_MIN` / `BASKETBALL_HUE_MAX` | 橙色掩码色相范围，夜景偏黄时上限可调到 40-45 |
+| `BASKETBALL_SATURATION_MIN` | 最小饱和度，运动模糊掉色时可降到 45 |
+| `BASKETBALL_VALUE_MIN` | 最小亮度，夜景可降到 40 |
+| `BASKETBALL_BALL_MIN_RADIUS_RATIO` / `BASKETBALL_BALL_MAX_RADIUS_RATIO` | 球候选半径范围；橙色灯柱较大时把最大值降到 0.05 |
+| `BASKETBALL_STATIC_PERSISTENCE_THRESHOLD` | 静止噪声过滤阈值，越低越激进 |
 
 颜色范围、半径比例、跟踪门限等更细的参数在
 `ShotDetectionConfig` / `build_tracks` 中，建议用真实评估集调整后再改默认值。
+单次请求也可以在 `POST /api/v1/analyses` 的 multipart 表单里传
+`hoop_roi=x,y,w,h`，覆盖部署级的 `BASKETBALL_HOOP_ROI`。

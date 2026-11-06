@@ -1,6 +1,7 @@
 package com.feiying.basketball.data
 
 import java.io.File
+import com.feiying.basketball.domain.HoopRoi
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.mockwebserver.MockResponse
@@ -60,6 +61,34 @@ class AnalysisApiTest {
         val body = request.body.readUtf8()
         assertTrue(body.contains("name=\"file\""))
         assertTrue(body.contains("filename=\"clip.mp4\""))
+    }
+
+    @Test
+    fun `upload sends hoop roi form field`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(202)
+                .setBody(
+                    """
+                    {"id":"job-2","status":"queued","filename":"clip.mp4",
+                     "created_at":"2026-11-05T00:00:00Z","result":null,"error":null}
+                    """.trimIndent(),
+                ),
+        )
+        val file = File.createTempFile("clip", ".mp4").apply {
+            writeBytes(ByteArray(16))
+            deleteOnExit()
+        }
+
+        api().upload(
+            file = file,
+            filename = "clip.mp4",
+            hoopRoi = HoopRoi(0.4f, 0.2f, 0.1f, 0.05f),
+        ) { _, _ -> }
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("name=\"hoop_roi\""))
+        assertTrue(body.contains("0.40000,0.20000,0.10000,0.05000"))
     }
 
     @Test

@@ -4,6 +4,7 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.util.concurrent.TimeUnit
+import com.feiying.basketball.domain.HoopRoi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -57,18 +58,22 @@ class AnalysisApi(
     suspend fun upload(
         file: File,
         filename: String,
+        hoopRoi: HoopRoi? = null,
         onProgress: (bytesSent: Long, totalBytes: Long) -> Unit,
     ): AnalysisJobDto = withContext(Dispatchers.IO) {
         val totalBytes = file.length()
         val mediaType = mediaTypeFor(filename)
-        val body = MultipartBody.Builder()
+        val multipart = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart(
                 "file",
                 filename,
                 ProgressRequestBody(file, mediaType) { sent -> onProgress(sent, totalBytes) },
             )
-            .build()
+        if (hoopRoi != null) {
+            multipart.addFormDataPart("hoop_roi", hoopRoi.toFormValue())
+        }
+        val body = multipart.build()
         val request = Request.Builder()
             .url("${baseUrl()}/api/v1/analyses")
             .post(body)

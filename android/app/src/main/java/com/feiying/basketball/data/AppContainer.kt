@@ -35,7 +35,7 @@ class AppContainer(context: Context) {
         appContext,
         AppDatabase::class.java,
         AppDatabase.NAME,
-    ).fallbackToDestructiveMigration().build()
+    ).addMigrations(AppDatabase.MIGRATION_1_2).fallbackToDestructiveMigration().build()
 
     val settingsStore = SettingsStore(appContext)
     val newAnalysisSession = NewAnalysisSession()

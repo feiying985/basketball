@@ -9,6 +9,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     UploadFile,
@@ -16,7 +17,7 @@ from fastapi import (
 )
 
 from app.api.dependencies import AuthContext, optional_auth, require_auth
-from app.config import settings
+from app.config import parse_hoop_roi, settings
 from app.schemas import AnalysisJob, HealthResponse
 from app.services.analysis import run_analysis
 from app.services.jobs import job_store
@@ -45,6 +46,7 @@ def health() -> HealthResponse:
 def create_analysis(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    hoop_roi: str | None = Form(default=None),
     auth: AuthContext | None = Depends(optional_auth),
 ) -> AnalysisJob:
     if settings.require_auth and auth is None:
@@ -62,10 +64,20 @@ def create_analysis(
             detail=f"不支持的视频格式: {suffix or '未知'}",
         )
 
+    parsed_hoop_roi = None
+    if hoop_roi is not None and hoop_roi.strip():
+        try:
+            parsed_hoop_roi = parse_hoop_roi(hoop_roi, name="hoop_roi")
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
     owner_id = auth.user.id if auth is not None else None
     job = job_store.create(filename=filename, owner_id=owner_id)
     video_path = _save_upload(file, job.id, suffix)
-    background_tasks.add_task(run_analysis, job.id, video_path)
+    background_tasks.add_task(run_analysis, job.id, video_path, parsed_hoop_roi)
     return job
 
 
