@@ -70,6 +70,28 @@ def test_analysis_accepts_user_hoop_roi(tmp_path: Path) -> None:
     assert any(shot["made"] for shot in payload["result"]["shots"])
 
 
+def test_analysis_reports_ambiguous_auto_hoop(tmp_path: Path) -> None:
+    """Auto hoop detection asks for a manual ROI instead of guessing."""
+
+    video = tmp_path / "competing-hoop.avi"
+    write_shot_video(video, competing_hoop=True)
+
+    with video.open("rb") as uploaded:
+        response = client.post(
+            "/api/v1/analyses",
+            files={"file": ("competing-hoop.avi", uploaded, "video/x-msvideo")},
+        )
+
+    assert response.status_code == 202
+    job = response.json()
+    payload = client.get(f"/api/v1/analyses/{job['id']}").json()
+
+    assert payload["status"] == "completed"
+    assert payload["result"]["shots"] == []
+    assert "手动" in payload["result"]["note"]
+    assert payload["result"]["hoop_confidence"] < 0.25
+
+
 def test_analysis_rejects_invalid_hoop_roi(tmp_path: Path) -> None:
     video = tmp_path / "clip.avi"
     write_shot_video(video)

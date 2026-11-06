@@ -28,13 +28,22 @@ def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return value
 
 
-def _env_ratio(name: str, default: float) -> float:
+def _env_fraction(name: str, default: float) -> float:
+    """Parse a 0-1 fraction; 0 is allowed (used to disable a threshold)."""
+
     raw = os.getenv(name, "").strip()
     try:
         value = float(raw) if raw else default
     except ValueError as exc:
         raise ValueError(f"{name} 需要 0-1 之间的小数") from exc
-    if not 0.0 < value <= 1.0:
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} 需要 0-1 之间的小数")
+    return value
+
+
+def _env_ratio(name: str, default: float) -> float:
+    value = _env_fraction(name, default)
+    if value <= 0.0:
         raise ValueError(f"{name} 需要 0-1 之间的小数")
     return value
 
@@ -95,7 +104,7 @@ def _env_roi(name: str) -> tuple[float, float, float, float] | None:
 @dataclass(frozen=True)
 class Settings:
     service_name: str = "basketball-server"
-    version: str = "0.4.0"
+    version: str = "0.4.1"
     upload_dir: Path = Path(os.getenv("BASKETBALL_UPLOAD_DIR", str(DEFAULT_UPLOAD_DIR)))
     max_upload_bytes: int = int(os.getenv("BASKETBALL_MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))
     detector_backend: str = os.getenv("BASKETBALL_DETECTOR", "classical").strip().lower()
@@ -112,8 +121,13 @@ class Settings:
     ball_min_radius_ratio: float = _env_ratio("BASKETBALL_BALL_MIN_RADIUS_RATIO", 0.010)
     ball_max_radius_ratio: float = _env_ratio("BASKETBALL_BALL_MAX_RADIUS_RATIO", 0.120)
     static_persistence_threshold: float = _env_ratio(
-        "BASKETBALL_STATIC_PERSISTENCE_THRESHOLD", 0.50
+        "BASKETBALL_STATIC_PERSISTENCE_THRESHOLD", 0.95
     )
+    # Auto hoop detection must not silently pick a decorative orange object.
+    # When the winning region only barely beats the runner-up the detection is
+    # ambiguous, so analysis asks for a hand-drawn hoop instead of returning
+    # events for the wrong target.  0 disables the check.
+    hoop_min_confidence: float = _env_fraction("BASKETBALL_HOOP_MIN_CONFIDENCE", 0.25)
     database_path: Path = _env_database_path()
     require_auth: bool = _env_bool("BASKETBALL_REQUIRE_AUTH", False)
     token_ttl_days: float = _env_float("BASKETBALL_TOKEN_TTL_DAYS", 30.0)
@@ -123,6 +137,8 @@ class Settings:
             raise ValueError("BASKETBALL_HUE_MIN 必须小于 BASKETBALL_HUE_MAX，且都在 0-179 之间")
         if self.ball_min_radius_ratio >= self.ball_max_radius_ratio:
             raise ValueError("BASKETBALL_BALL_MIN_RADIUS_RATIO 必须小于最大值")
+        if not 0.0 <= self.hoop_min_confidence <= 1.0:
+            raise ValueError("BASKETBALL_HOOP_MIN_CONFIDENCE 需要 0-1 之间的小数")
 
 
 settings = Settings()

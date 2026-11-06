@@ -34,6 +34,7 @@ def write_shot_video(
     with_rim: bool = True,
     rim_color: tuple[int, int, int] = RIM_COLOR,
     static_blobs: int = 0,
+    competing_hoop: bool = False,
 ) -> None:
     """Write a clip with one shot arc.
 
@@ -41,7 +42,9 @@ def write_shot_video(
     starting height. ``apex_x``/``end_x`` control whether the arc goes through
     the rim or misses to the side.  ``static_blobs`` adds stationary orange
     squares (lamp posts/posters in the real-video report) that compete with the
-    ball for candidate slots.
+    ball for candidate slots.  ``competing_hoop`` adds a second persistent
+    orange bar at hoop height, mimicking a decorative light that auto hoop
+    detection could mistake for the rim.
     """
 
     write_arc_video(
@@ -51,6 +54,7 @@ def write_shot_video(
         with_rim=with_rim,
         rim_color=rim_color,
         static_blobs=static_blobs,
+        competing_hoop=competing_hoop,
     )
 
 
@@ -62,6 +66,7 @@ def write_arc_video(
     with_rim: bool = True,
     rim_color: tuple[int, int, int] = RIM_COLOR,
     static_blobs: int = 0,
+    competing_hoop: bool = False,
 ) -> None:
     """Write one shot arc per ``(apex_x, end_x)`` entry, back to back."""
 
@@ -81,6 +86,8 @@ def write_arc_video(
                 frame = _background()
                 if with_rim:
                     _draw_rim(frame, rim_color)
+                if competing_hoop:
+                    _draw_competing_hoop(frame)
                 _draw_static_blobs(frame, static_blobs)
                 _draw_ball(frame, _arc_position(u, apex_x=apex_x, end_x=end_x))
                 writer.write(frame)
@@ -138,6 +145,12 @@ def _draw_static_blobs(frame: np.ndarray, count: int) -> None:
     for index in range(count):
         left = 20 + index * 55
         cv2.rectangle(frame, (left, 315), (left + 30, 345), RIM_COLOR, -1)
+
+
+def _draw_competing_hoop(frame: np.ndarray) -> None:
+    """Draw a stationary orange bar at hoop height, left of the real rim."""
+
+    cv2.rectangle(frame, (120, 90), (240, 110), RIM_COLOR, -1)
 
 
 def _draw_ball(frame: np.ndarray, position: tuple[float, float]) -> None:

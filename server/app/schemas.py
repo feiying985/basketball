@@ -25,6 +25,12 @@ class AnalysisResult(BaseModel):
     detector: str
     shots: list[ShotEvent] = Field(default_factory=list)
     note: str | None = None
+    hoop_confidence: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="自动找筐置信度（0-1）；手动指定篮筐时为 1",
+    )
 
 
 class AnalysisJob(BaseModel):
