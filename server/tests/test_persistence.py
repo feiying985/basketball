@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 
 from fastapi.testclient import TestClient
 
@@ -66,3 +67,56 @@ def test_startup_marks_interrupted_jobs_failed() -> None:
 
     assert payload["status"] == "failed"
     assert payload["error"] == INTERRUPTED_ERROR
+
+
+def test_job_stage_is_persisted_and_cleared_on_interrupt(tmp_path: Path) -> None:
+    store = _store(tmp_path / "jobs.db")
+    job = store.create("clip.mp4")
+    store.update(job.id, status=JobStatus.PROCESSING, stage="clipping")
+
+    reopened = _store(tmp_path / "jobs.db")
+    assert reopened.get(job.id).stage == "clipping"
+
+    assert reopened.fail_interrupted() == 1
+    failed = reopened.get(job.id)
+    assert failed.status is JobStatus.FAILED
+    assert failed.stage is None
+
+
+def test_database_adds_stage_column_to_an_existing_database(tmp_path: Path) -> None:
+    """0.4.x databases had no jobs.stage; opening them must not lose history."""
+
+    path = tmp_path / "old.db"
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE jobs (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT,
+                status TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                result_json TEXT,
+                error TEXT
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO jobs (id, owner_id, status, filename, created_at, updated_at)
+            VALUES ('old-job', NULL, 'completed', 'old.mp4',
+                    '2026-11-01T00:00:00+00:00', '2026-11-01T00:00:00+00:00')
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    store = _store(path)
+    record = store.get("old-job")
+
+    assert record is not None
+    assert record.status is JobStatus.COMPLETED
+    assert record.stage is None

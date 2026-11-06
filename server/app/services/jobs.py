@@ -94,7 +94,8 @@ class JobStore:
             connection.execute(
                 """
                 UPDATE jobs
-                SET status = ?, filename = ?, result_json = ?, error = ?, updated_at = ?
+                SET status = ?, filename = ?, result_json = ?, error = ?, stage = ?,
+                    updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -102,6 +103,7 @@ class JobStore:
                     updated.filename,
                     result_json,
                     updated.error,
+                    updated.stage,
                     now.isoformat(),
                     job_id,
                 ),
@@ -117,7 +119,7 @@ class JobStore:
             cursor = connection.execute(
                 """
                 UPDATE jobs
-                SET status = ?, error = ?, updated_at = ?
+                SET status = ?, error = ?, stage = NULL, updated_at = ?
                 WHERE status IN (?, ?)
                 """,
                 (
@@ -145,6 +147,7 @@ def _job_from_row(row: sqlite3.Row) -> AnalysisJob:
         created_at=row["created_at"],
         result=result,
         error=row["error"],
+        stage=row["stage"],
     )
 
 

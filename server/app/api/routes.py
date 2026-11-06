@@ -15,12 +15,14 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 
 from app.api.dependencies import AuthContext, optional_auth, require_auth
 from app.config import parse_hoop_roi, settings
-from app.schemas import AnalysisJob, HealthResponse
+from app.schemas import AnalysisJob, ClipStatus, HealthResponse
 from app.services.analysis import run_analysis
-from app.services.jobs import job_store
+from app.services.clips import clip_service
+from app.services.jobs import JobRecord, job_store
 from app.services.shot_detection import detector
 
 router = APIRouter()
@@ -35,6 +37,7 @@ def health() -> HealthResponse:
         service=settings.service_name,
         version=settings.version,
         detector=detector.name,
+        clips=clip_service.available,
     )
 
 
@@ -95,6 +98,53 @@ def get_analysis(
     job_id: str,
     auth: AuthContext | None = Depends(optional_auth),
 ) -> AnalysisJob:
+    return _owned_record(job_id, auth).job
+
+
+@router.get("/analyses/{job_id}/clips/{index}")
+def get_analysis_clip(
+    job_id: str,
+    index: int,
+    auth: AuthContext | None = Depends(optional_auth),
+) -> FileResponse:
+    """Stream a generated shot clip with HTTP Range support for seeking."""
+
+    record = _owned_record(job_id, auth)
+    shots = record.job.result.shots if record.job.result is not None else []
+    if index < 0 or index >= len(shots):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="片段不存在")
+
+    clip = shots[index].clip
+    if clip is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="该投篮没有生成片段",
+        )
+    if clip.status is not ClipStatus.READY:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="片段尚未生成或生成失败",
+        )
+
+    path = settings.clip_output_dir / job_id / f"{index}.mp4"
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="片段文件已清理",
+        )
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        headers={
+            "Content-Disposition": f'inline; filename="shot-{index + 1}.mp4"',
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+def _owned_record(job_id: str, auth: AuthContext | None) -> JobRecord:
+    """Load a job applying the same ownership rules as the result endpoint."""
+
     record = job_store.get_record(job_id)
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分析任务不存在")
@@ -110,7 +160,7 @@ def get_analysis(
             detail="需要登录",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return record.job
+    return record
 
 
 def _save_upload(file: UploadFile, job_id: str, suffix: str) -> Path:

@@ -15,6 +15,11 @@ import pytest
 
 _TEST_DATA_DIR = Path(tempfile.mkdtemp(prefix="basketball-server-tests-"))
 os.environ["BASKETBALL_DB_PATH"] = str(_TEST_DATA_DIR / "test.db")
+# Tests must not depend on a real ffmpeg for the normal analysis flow, and they
+# must not write clips into the developer's upload directory.  Clip tests build
+# their own Settings/ClipService with an explicit ffmpeg path.
+os.environ["BASKETBALL_CLIP_DIR"] = str(_TEST_DATA_DIR / "clips")
+os.environ["BASKETBALL_FFMPEG_PATH"] = str(_TEST_DATA_DIR / "missing-ffmpeg")
 
 
 @pytest.fixture(autouse=True)

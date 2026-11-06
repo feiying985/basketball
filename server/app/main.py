@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -12,7 +13,10 @@ from app.api.auth import router as auth_router
 from app.api.routes import router
 from app.config import settings
 from app.services.accounts import user_store
+from app.services.clips import clip_service
 from app.services.jobs import job_store
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -21,6 +25,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # previous process is stale.  Results already persisted stay readable.
     job_store.fail_interrupted()
     user_store.purge_expired_sessions()
+    if not clip_service.available:
+        logger.warning(
+            "ffmpeg 不可用（%s），进球片段将不会生成；健康检查 clips=false",
+            settings.ffmpeg_path,
+        )
     yield
 
 

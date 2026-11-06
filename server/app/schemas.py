@@ -15,10 +15,26 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+class ClipStatus(str, Enum):
+    READY = "ready"
+    FAILED = "failed"
+
+
+class ShotClip(BaseModel):
+    status: ClipStatus
+    start_seconds: float = Field(..., ge=0, description="片段开始时间（秒）")
+    end_seconds: float = Field(..., ge=0, description="片段结束时间（秒）")
+    duration_seconds: float = Field(..., ge=0, description="片段时长（秒）")
+    size_bytes: int | None = Field(default=None, ge=0)
+    url: str | None = Field(default=None, description="相对接口路径，客户端拼接服务地址")
+    error: str | None = None
+
+
 class ShotEvent(BaseModel):
     timestamp_seconds: float = Field(..., ge=0, description="进球发生时间（秒）")
     frame_index: int = Field(..., ge=0)
     made: bool = Field(..., description="true=命中，false=未命中")
+    clip: ShotClip | None = Field(default=None, description="进球前后片段；未生成为空")
 
 
 class AnalysisResult(BaseModel):
@@ -31,6 +47,10 @@ class AnalysisResult(BaseModel):
         le=1,
         description="自动找筐置信度（0-1）；手动指定篮筐时为 1",
     )
+    clip_note: str | None = Field(
+        default=None,
+        description="片段生成未执行或整体不可用时的说明",
+    )
 
 
 class AnalysisJob(BaseModel):
@@ -40,6 +60,10 @@ class AnalysisJob(BaseModel):
     created_at: datetime
     result: AnalysisResult | None = None
     error: str | None = None
+    stage: str | None = Field(
+        default=None,
+        description="处理阶段：detecting / clipping；任务结束时为空",
+    )
 
 
 class HealthResponse(BaseModel):
@@ -47,6 +71,7 @@ class HealthResponse(BaseModel):
     service: str
     version: str
     detector: str
+    clips: bool = Field(default=False, description="服务端是否可用 ffmpeg 生成片段")
 
 
 class User(BaseModel):

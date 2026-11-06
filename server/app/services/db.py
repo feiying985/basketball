@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     owner_id TEXT,
     status TEXT NOT NULL,
+    stage TEXT,
     filename TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -73,6 +74,13 @@ class Database:
     def _initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            # Existing databases predate the clip stage column; add it in place
+            # instead of asking operators to delete their task history.
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(jobs)")
+            }
+            if "stage" not in columns:
+                connection.execute("ALTER TABLE jobs ADD COLUMN stage TEXT")
             connection.commit()
 
 
