@@ -84,22 +84,52 @@ class AnalysisRepository(
     private val timeoutAcknowledged = ConcurrentHashMap.newKeySet<String>()
     private val resumedOnOpen = ConcurrentHashMap.newKeySet<String>()
 
+    @Volatile
+    private var ownerUserId: String? = null
+    private var observationJob: kotlinx.coroutines.Job? = null
+
     init {
-        scope.launch {
-            dao.observeAll().collect { entities ->
-                _records.value = entities.map { it.toDomain() }
-            }
-        }
-        scope.launch { recoverInterruptedUploads() }
         scope.launch { checkHealth() }
     }
 
-    suspend fun recoverInterruptedUploads() {
+    /**
+     * Switches the local history view to one account.  Legacy anonymous records
+     * are claimed by the first account that signs in on this device.
+     */
+    suspend fun setOwner(ownerId: String?) {
+        if (ownerId == ownerUserId) return
+        ownerUserId = ownerId
+        observationJob?.cancel()
+        observationJob = null
+        _records.value = emptyList()
+        jobs.values.forEach { it.cancel() }
+        jobs.clear()
+        timeoutAcknowledged.clear()
+        resumedOnOpen.clear()
+        _active.value = emptyMap()
+        if (ownerId == null) return
+        dao.claimUnowned(ownerId)
+        observationJob = scope.launch {
+            dao.observeByOwner(ownerId).collect { entities ->
+                _records.value = entities.map { it.toDomain() }
+            }
+        }
+        recoverInterruptedUploads(ownerId)
+    }
+
+    suspend fun recoverInterruptedUploads(ownerId: String? = null) {
+        val owner = ownerId ?: ownerUserId ?: return
         dao.updateStatusForAll(
             oldStatus = AnalysisStatus.UPLOADING.name,
             newStatus = AnalysisStatus.UPLOAD_INTERRUPTED.name,
             updatedAt = now(),
+            ownerId = owner,
         )
+    }
+
+    private suspend fun ownedEntity(recordId: String): AnalysisRecordEntity? {
+        val owner = ownerUserId ?: return null
+        return dao.get(recordId, owner)
     }
 
     suspend fun checkHealth() {
@@ -158,7 +188,7 @@ class AnalysisRepository(
         timeoutAcknowledged.remove(recordId)
         resumedOnOpen.remove(recordId)
         scope.launch {
-            val entity = dao.get(recordId) ?: return@launch
+            val entity = ownedEntity(recordId) ?: return@launch
             val file = entity.localVideoPath?.let(::File)
             if (file == null || !file.exists()) {
                 markFailed(recordId, AnalysisStatus.FAILED, AnalysisError.VIDEO_MISSING, null)
@@ -179,7 +209,7 @@ class AnalysisRepository(
         timeoutAcknowledged.remove(recordId)
         _active.update { it - recordId }
         scope.launch {
-            dao.delete(recordId)
+            ownerUserId?.let { owner -> dao.delete(recordId, owner) }
         }
     }
 
@@ -198,8 +228,9 @@ class AnalysisRepository(
         resumedOnOpen.remove(recordId)
         _active.update { it - recordId }
         scope.launch {
-            val entity = dao.get(recordId)
-            dao.delete(recordId)
+            val owner = ownerUserId ?: return@launch
+            val entity = dao.get(recordId, owner)
+            dao.delete(recordId, owner)
             if (deleteVideo) VideoFiles.deleteQuietly(entity?.localVideoPath)
         }
     }
@@ -221,7 +252,7 @@ class AnalysisRepository(
     }
 
     private suspend fun runAnalysis(recordId: String) {
-        val entity = dao.get(recordId) ?: return
+        val entity = ownedEntity(recordId) ?: return
         val status = entity.status.toStatus() ?: AnalysisStatus.FAILED
         if (status == AnalysisStatus.COMPLETED || status == AnalysisStatus.EXPIRED) return
 
@@ -467,6 +498,7 @@ class AnalysisRepository(
         errorCode = errorCode?.name,
         errorDetail = errorDetail,
         updatedAt = updatedAt,
+        ownerUserId = this@AnalysisRepository.ownerUserId,
     )
 
     private fun String.toStatus(): AnalysisStatus? =

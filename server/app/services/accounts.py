@@ -18,6 +18,7 @@ from app.config import settings
 from app.schemas import User
 from app.services.db import Database
 from app.services.db import database as default_database
+from app.services.phone import InvalidPhone, mask_phone, normalize_phone
 
 SCRYPT_N = 2**14
 SCRYPT_R = 8
@@ -27,6 +28,22 @@ SCRYPT_DKLEN = 32
 
 class UsernameTaken(Exception):
     """Raised when a username is already registered."""
+
+
+class PhoneTaken(Exception):
+    """Raised when a phone number is already registered."""
+
+
+class InvalidPassword(Exception):
+    """Raised when the current password does not match."""
+
+
+class SamePassword(Exception):
+    """Raised when the new password equals the current password."""
+
+
+class CodeAlreadyUsed(Exception):
+    """Raised when a verification code was consumed or has expired."""
 
 
 def hash_password(password: str) -> str:
@@ -68,7 +85,7 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-# Compared against for unknown usernames so login timing does not reveal
+# Compared against for unknown accounts so login timing does not reveal
 # whether an account exists.
 _DUMMY_PASSWORD_HASH = hash_password("invalid-password")
 
@@ -78,9 +95,17 @@ class UserStore:
         self._database = database or default_database
 
     def create(self, username: str, password: str) -> User:
+        """Create a legacy username-only account.
+
+        Kept for tests and existing deployments.  New registrations go through
+        :meth:`create_phone_user`.
+        """
+
         user = User(
             id=uuid.uuid4().hex,
+            phone=None,
             username=username,
+            display_name=username,
             created_at=datetime.now(timezone.utc),
         )
         password_hash = hash_password(password)
@@ -88,8 +113,11 @@ class UserStore:
             try:
                 connection.execute(
                     """
-                    INSERT INTO users (id, username, username_key, password_hash, created_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO users (
+                        id, phone, phone_verified_at, username, username_key,
+                        password_hash, created_at
+                    )
+                    VALUES (?, NULL, NULL, ?, ?, ?, ?)
                     """,
                     (
                         user.id,
@@ -104,18 +132,117 @@ class UserStore:
             connection.commit()
         return user
 
-    def authenticate(self, username: str, password: str) -> User | None:
+    def create_phone_user(
+        self,
+        phone: str,
+        password: str,
+        username: str | None,
+        *,
+        code_id: str,
+    ) -> User:
+        """Create a phone-verified account and consume its SMS code atomically."""
+
+        now = datetime.now(timezone.utc)
+        user = User(
+            id=uuid.uuid4().hex,
+            phone=phone,
+            username=username,
+            display_name=username or mask_phone(phone),
+            created_at=now,
+        )
+        password_hash = hash_password(password)
+        with self._database.write_lock, self._database.connect() as connection:
+            code_row = connection.execute(
+                """
+                SELECT id FROM sms_codes
+                WHERE id = ? AND phone = ? AND purpose = 'register'
+                  AND consumed_at IS NULL AND expires_at > ?
+                """,
+                (code_id, phone, now.isoformat()),
+            ).fetchone()
+            if code_row is None:
+                raise CodeAlreadyUsed()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO users (
+                        id, phone, phone_verified_at, username, username_key,
+                        password_hash, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user.id,
+                        phone,
+                        now.isoformat(),
+                        username,
+                        _username_key(username) if username else None,
+                        password_hash,
+                        now.isoformat(),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                message = str(exc)
+                if "users.phone" in message:
+                    raise PhoneTaken(phone) from exc
+                if "users.username_key" in message:
+                    raise UsernameTaken(username or "") from exc
+                raise
+            consumed = connection.execute(
+                """
+                UPDATE sms_codes SET consumed_at = ?
+                WHERE id = ? AND consumed_at IS NULL
+                """,
+                (now.isoformat(), code_id),
+            )
+            if consumed.rowcount != 1:
+                raise CodeAlreadyUsed()
+            connection.commit()
+        return user
+
+    def find_by_account(self, account: str) -> User | None:
+        """Find by username first, then by normalized phone."""
+
+        with self._database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE username_key = ?",
+                (_username_key(account),),
+            ).fetchone()
+        if row is not None:
+            return _user_from_row(row)
+        try:
+            phone = normalize_phone(account)
+        except InvalidPhone:
+            return None
+        return self.get_by_phone(phone)
+
+    def get_by_phone(self, phone: str) -> User | None:
+        with self._database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE phone = ?", (phone,)
+            ).fetchone()
+        return _user_from_row(row) if row is not None else None
+
+    def get_by_username(self, username: str) -> User | None:
         with self._database.connect() as connection:
             row = connection.execute(
                 "SELECT * FROM users WHERE username_key = ?",
                 (_username_key(username),),
             ).fetchone()
-        if row is None:
+        return _user_from_row(row) if row is not None else None
+
+    def authenticate(self, account: str, password: str) -> User | None:
+        user = self.find_by_account(account)
+        if user is None:
             verify_password(password, _DUMMY_PASSWORD_HASH)
             return None
-        if not verify_password(password, row["password_hash"]):
+        with self._database.connect() as connection:
+            row = connection.execute(
+                "SELECT password_hash FROM users WHERE id = ?", (user.id,)
+            ).fetchone()
+        if row is None or not verify_password(password, row["password_hash"]):
             return None
-        return _user_from_row(row)
+        return user
 
     def get(self, user_id: str) -> User | None:
         with self._database.connect() as connection:
@@ -123,6 +250,61 @@ class UserStore:
                 "SELECT * FROM users WHERE id = ?", (user_id,)
             ).fetchone()
         return _user_from_row(row) if row is not None else None
+
+    def change_password(
+        self,
+        user_id: str,
+        current_password: str,
+        new_password: str,
+        *,
+        keep_token_hash: str,
+    ) -> None:
+        with self._database.write_lock, self._database.connect() as connection:
+            row = connection.execute(
+                "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+            if row is None or not verify_password(current_password, row["password_hash"]):
+                raise InvalidPassword()
+            if verify_password(new_password, row["password_hash"]):
+                raise SamePassword()
+            connection.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (hash_password(new_password), user_id),
+            )
+            connection.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                (user_id, keep_token_hash),
+            )
+            connection.commit()
+
+    def reset_password(self, user_id: str, new_password: str, *, code_id: str) -> None:
+        now = datetime.now(timezone.utc)
+        with self._database.write_lock, self._database.connect() as connection:
+            code_row = connection.execute(
+                """
+                SELECT id FROM sms_codes
+                WHERE id = ? AND purpose = 'reset'
+                  AND consumed_at IS NULL AND expires_at > ?
+                """,
+                (code_id, now.isoformat()),
+            ).fetchone()
+            if code_row is None:
+                raise CodeAlreadyUsed()
+            connection.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (hash_password(new_password), user_id),
+            )
+            connection.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            consumed = connection.execute(
+                """
+                UPDATE sms_codes SET consumed_at = ?
+                WHERE id = ? AND consumed_at IS NULL
+                """,
+                (now.isoformat(), code_id),
+            )
+            if consumed.rowcount != 1:
+                raise CodeAlreadyUsed()
+            connection.commit()
 
     def create_session(self, user_id: str) -> tuple[str, datetime | None]:
         token = secrets.token_urlsafe(32)
@@ -173,6 +355,19 @@ class UserStore:
             )
             connection.commit()
 
+    def revoke_other_sessions(self, user_id: str, keep_token_hash: str) -> None:
+        with self._database.write_lock, self._database.connect() as connection:
+            connection.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                (user_id, keep_token_hash),
+            )
+            connection.commit()
+
+    def revoke_all_sessions(self, user_id: str) -> None:
+        with self._database.write_lock, self._database.connect() as connection:
+            connection.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            connection.commit()
+
     def purge_expired_sessions(self) -> int:
         now = datetime.now(timezone.utc).isoformat()
         with self._database.write_lock, self._database.connect() as connection:
@@ -189,9 +384,13 @@ def _username_key(username: str) -> str:
 
 
 def _user_from_row(row: sqlite3.Row) -> User:
+    username = row["username"]
+    phone = row["phone"]
     return User(
         id=row["id"],
-        username=row["username"],
+        phone=phone,
+        username=username,
+        display_name=username or mask_phone(phone) or "用户",
         created_at=row["created_at"],
     )
 

@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Button
@@ -32,6 +33,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -77,6 +79,7 @@ import kotlinx.coroutines.launch
 fun HomeRoute(
     container: AppContainer,
     navController: NavHostController,
+    onOpenAccount: () -> Unit,
 ) {
     val repository = container.repository
     val records by repository.records.collectAsStateWithLifecycle()
@@ -133,6 +136,7 @@ fun HomeRoute(
             },
             onCheckHealth = { scope.launch { repository.checkHealth() } },
             onDeveloperSettings = { showDeveloperSettings = true },
+            onOpenAccount = onOpenAccount,
         )
         SnackbarHost(
             hostState = snackbarHostState,
@@ -187,6 +191,7 @@ fun HomeContent(
     onOpenRecord: (AnalysisRecord) -> Unit,
     onCheckHealth: () -> Unit,
     onDeveloperSettings: () -> Unit,
+    onOpenAccount: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val latest = records.firstOrNull()
@@ -196,11 +201,23 @@ fun HomeContent(
             .statusBarsPadding()
             .padding(horizontal = 24.dp, vertical = 20.dp),
     ) {
-        Text(
-            text = stringResource(R.string.home_title),
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.home_title),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onOpenAccount) {
+                Icon(
+                    imageVector = Icons.Outlined.AccountCircle,
+                    contentDescription = stringResource(R.string.account_title),
+                )
+            }
+        }
         Text(
             text = stringResource(R.string.home_subtitle),
             style = MaterialTheme.typography.bodyLarge,

@@ -1,7 +1,8 @@
 # 后端部署与进球识别验证指引
 
-> - **适用代码**：`server` 0.5.0（经典 CV 检测器 + SQLite 任务持久化 + 账号体系 + 进球片段）；安卓端为 `main` 上的 App MVP。
-> - **更新日期**：2026-11-06
+> - **适用代码**：`server` 0.6.0（经典 CV 检测器 + SQLite 任务持久化 + 手机号账号/短信验证码 +
+>   进球片段）；安卓端为支持登录门禁的 App。
+> - **更新日期**：2026-11-08
 > - **目标环境**：阿里云 ECS（Ubuntu 24.04 LTS，2 vCPU / 2 GB 起）
 > - **文档定位**：把「部署后端 → 验证接口 → 验证进球识别 → 用 App 走通全流程」串成一次可执行的验收；同时说明当前完成度和还缺的功能。
 > - **0.3.0 变更**：任务状态与结果写入 SQLite（重启不丢），新增注册/登录/Bearer token 与任务归属。
@@ -15,6 +16,9 @@
 >   `GET /api/v1/analyses/{id}/clips/{index}`（支持 Range）、`jobs.stage`、
 >   `result.shots[].clip` 与 `health.clips`；App 结果页可播放片段并保存到相册。
 >   部署机必须安装 ffmpeg，细节见 [shot-clips.md](shot-clips.md)。
+> - **0.6.0 变更**：手机号验证码注册、账号（手机号/用户名）+ 密码或手机号 + 验证码登录、
+>   修改/重置密码、App 登录门禁与 token 加密存储；新增短信验证码表、限流与阿里云/dev
+>   发送实现。生产必须配置阿里云短信并打开 `BASKETBALL_REQUIRE_AUTH=true`。
 
 ## 0. 先回答两个问题
 
@@ -22,8 +26,8 @@
 
 **可以。`main` 已包含经典 CV 检测器（PR #2 已合入）。**
 
-- 0.5.0 默认 `BASKETBALL_DETECTOR=classical`，任务完成时会返回 `result.shots`；
-- 部署后先确认 `GET /api/v1/health` 返回 `version=0.5.0`、`detector=classical`。如果
+- 0.6.0 默认 `BASKETBALL_DETECTOR=classical`，任务完成时会返回 `result.shots`；
+- 部署后先确认 `GET /api/v1/health` 返回 `version=0.6.0`、`detector=classical`。如果
   `detector` 是 `stub` 或版本更旧，说明代码不是最新 `main`，先 `git pull` 再重启；
 - 仍想复现 PR #2 合入前的行为时，可检出对应历史提交；[附录 A](#附录-a不合并-main-也能验证)
   保留为历史说明，正常部署不再需要。
@@ -47,8 +51,9 @@
 | 服务端任务持久化 | ✅ 已完成 | 0.3.0 起使用 SQLite，重启后已完成任务仍可查询 |
 | 进球片段（服务端生成 + App 播放/保存） | ✅ 已完成 | 0.5.0；默认只剪命中、前后各 5 秒，部署需装 ffmpeg |
 | 任务队列 / 断点续跑 | ❌ 未做 | 分析仍是进程内任务；重启时未完成任务标记为 `failed` |
-| 账号体系（注册/登录/token/任务归属） | 🟡 服务端已完成 | 0.3.0 起已提供接口；App 登录与云端历史未接入 |
-| 限流 / HTTPS / 上传文件清理 | ❌ 未做 | 公网长期运行前需要补；上传文件目前不自动删除 |
+| 账号体系（手机号注册/双登录/改密/任务归属） | ✅ 已完成 | 0.6.0；App 登录门禁与 token 加密存储已接入 |
+| 短信验证码与登录限流 | ✅ 已完成 | 阿里云/dev 双实现；手机号/IP/全站限流 |
+| HTTPS / 上传文件清理 | ❌ 未做 | 生产必须配 HTTPS；上传/片段文件目前不自动删除 |
 | 云端历史 / 多设备同步 | ❌ 未做 | 服务端已有任务列表接口，App 仍只有本地 Room 历史 |
 | 端侧实时识别 | ❌ 未做 | 规划在第二阶段（TFLite / NCNN） |
 | 分享、多人/多球统计 | ❌ 未做 | 当前不在 MVP 范围；片段暂不支持分享 |
@@ -56,13 +61,13 @@
 按优先级展开：
 
 - **P0（让这次验证真正有意义）**
-  1. 确认部署的是 `main` 0.5.0（健康检查 `version=0.5.0`、`detector=classical`）；
+  1. 确认部署的是 `main` 0.6.0（健康检查 `version=0.6.0`、`detector=classical`）；
   2. 用真实球场视频跑一批样本，记录「实际命中 vs 识别命中」，作为第一版评估集。
 - **P1（让 MVP 可日常使用）**
   1. 结果人工纠正（本地覆盖 `made`，不写回服务端）；
   2. 可持久化的任务队列（重启后续跑）、上传文件与片段过期清理；
-  3. App 接入注册/登录与 token 存储，打开 `BASKETBALL_REQUIRE_AUTH`；
-  4. 登录限流、HTTPS 域名、App 后台完成通知、断点续传。
+  3. 旧账号绑定手机号（旧账号目前仍用用户名 + 密码登录）；
+  4. HTTPS 域名、App 后台完成通知、断点续传。
 - **P2（产品化）**
   1. 学习型检测器（YOLO/RT-DETR + ByteTrack，注意许可证）；
   2. 端侧实时识别；
@@ -216,9 +221,19 @@ BASKETBALL_MAX_UPLOAD_BYTES=209715200
 BASKETBALL_DETECTOR=classical
 BASKETBALL_SAMPLE_FPS=10
 BASKETBALL_SHOT_COOLDOWN_SECONDS=1.5
-# App 接入登录前保持 false；接入后改为 true 强制鉴权
-BASKETBALL_REQUIRE_AUTH=false
+# 0.6.0 App 已接入登录；生产建议 true，服务端强制分析接口登录
+BASKETBALL_REQUIRE_AUTH=true
 BASKETBALL_TOKEN_TTL_DAYS=30
+BASKETBALL_ENV=production
+# 短信：生产用阿里云；签名/模板需先在控制台审核
+BASKETBALL_SMS_PROVIDER=aliyun
+BASKETBALL_SMS_ACCESS_KEY_ID=替换为RAM_ACCESS_KEY_ID
+BASKETBALL_SMS_ACCESS_KEY_SECRET=替换为RAM_ACCESS_KEY_SECRET
+BASKETBALL_SMS_SIGN_NAME=替换为已审核签名
+BASKETBALL_SMS_TEMPLATE_CODE=替换为已审核模板CODE
+BASKETBALL_SMS_CODE_PEPPER=替换为32字节以上随机字符串
+# 本地联调可改回 dev：验证码只写服务端日志，不会发短信
+# BASKETBALL_SMS_PROVIDER=dev
 # 进球片段：默认只剪命中球、前后各 5 秒
 BASKETBALL_CLIP_ENABLED=true
 BASKETBALL_CLIP_PRE_SECONDS=5
@@ -251,7 +266,7 @@ User=basketball
 Group=basketball
 WorkingDirectory=/opt/basketball/app/server
 EnvironmentFile=/etc/basketball.env
-ExecStart=/opt/basketball/app/server/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=/opt/basketball/app/server/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=30
@@ -274,10 +289,10 @@ curl -s http://127.0.0.1:8000/api/v1/health
 应该返回：
 
 ```json
-{"status":"ok","service":"basketball-server","version":"0.5.0","detector":"classical","clips":true}
+{"status":"ok","service":"basketball-server","version":"0.6.0","detector":"classical","clips":true}
 ```
 
-- `version` 低于 `0.5.0` 或 `detector` 是 `stub`：说明部署的不是最新 `main`，先 `git pull` 再重启，见第 10 节。
+- `version` 低于 `0.6.0` 或 `detector` 是 `stub`：说明部署的不是最新 `main`，先 `git pull` 再重启，见第 10 节。
 - `clips=false`：ffmpeg 不可用或已关闭片段功能；执行 `ffmpeg -version` 检查，
   或确认 `BASKETBALL_FFMPEG_PATH` 指向可执行文件。识别功能不受影响。
 - 如果启动失败，看日志：`sudo journalctl -u basketball -n 100 --no-pager`。
@@ -288,6 +303,9 @@ curl -s http://127.0.0.1:8000/api/v1/health
 sudo rm -f /etc/nginx/sites-enabled/default
 
 sudo tee /etc/nginx/sites-available/basketball >/dev/null <<'EOF'
+# sites-available 文件会被 include 进 http 上下文
+limit_req_zone $binary_remote_addr zone=basketball_auth:10m rate=30r/m;
+
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -300,6 +318,16 @@ server {
     # 上传大文件/慢网络时不要过早断开
     proxy_read_timeout 600s;
     proxy_send_timeout 600s;
+
+    # 登录/发码/重置接口限流；应用层还有手机号/IP/验证码次数限制
+    location /api/v1/auth/ {
+        limit_req zone=basketball_auth burst=10 nodelay;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -393,7 +421,7 @@ curl -s http://<SERVER>/api/v1/health | jq .
 {
   "status": "ok",
   "service": "basketball-server",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "detector": "classical",
   "clips": true
 }
@@ -690,7 +718,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 部署完成后逐项打勾：
 
-- [ ] `GET /api/v1/health` 返回 `version=0.5.0`、`detector=classical`、`clips=true`
+- [ ] `GET /api/v1/health` 返回 `version=0.6.0`、`detector=classical`、`clips=true`
 - [ ] `GET /docs` 可打开，能看到 `/api/v1/auth/*`、`GET /api/v1/analyses`
   与 `GET /api/v1/analyses/{id}/clips/{index}`
 - [ ] 注册、登录、`GET /auth/me`、退出登录均返回预期状态码
@@ -715,7 +743,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 
 | 现象 | 可能原因 | 处理 |
 | --- | --- | --- |
-| `detector` 是 `stub` 或 `version` 低于 `0.5.0` | 部署的是旧代码 | `git pull` 最新 `main` 后重启；确认 `server/app/services/db.py` 存在 |
+| `detector` 是 `stub` 或 `version` 低于 `0.6.0` | 部署的是旧代码 | `git pull` 最新 `main` 后重启；确认 `server/app/services/sms.py` 存在 |
 | `clips=false` 或片段全部失败 | 没有 ffmpeg、路径不对或版本过旧 | `ffmpeg -version`；设置 `BASKETBALL_FFMPEG_PATH`；重新分析 |
 | 结果页没有片段区 | 识别到的都是未中球、旧任务未生成、或 ffmpeg 不可用 | 看 `result.clip_note`/`clip.status`；旧任务重新分析；装好 ffmpeg 后重新分析 |
 | 502 Bad Gateway | uvicorn 没起来/端口不对 | `systemctl status basketball`、`journalctl -u basketball -n 100`、`curl 127.0.0.1:8000/api/v1/health` |
@@ -796,7 +824,7 @@ git checkout <包含该提交的 commit>
 ## 附录 C：文档验证说明
 
 本文档中的服务端代码路径、服务端测试、`/api/v1/health`、上传/轮询、413/415/404 行为，
-注册/登录、任务归属、SQLite 重启持久化，以及 0.5.0 的片段生成、Range 播放和 `health.clips`，
+手机号注册/双登录/改密、任务归属、SQLite 重启持久化，以及 0.5.0 的片段生成、Range 播放和 `health.clips`，
 已在本地用同一份代码和依赖实际跑通（Python 3.11、OpenCV 4.10、NumPy 1.26、ffmpeg）；
 持久化与账号细节见 [server-persistence-accounts.md](server-persistence-accounts.md)，
 片段细节见 [shot-clips.md](shot-clips.md)。

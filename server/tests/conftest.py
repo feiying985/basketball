@@ -30,5 +30,13 @@ def clean_database() -> Iterator[None]:
         connection.execute("DELETE FROM sessions")
         connection.execute("DELETE FROM jobs")
         connection.execute("DELETE FROM users")
+        connection.execute("DELETE FROM sms_codes")
         connection.commit()
+    from app.api.auth import _login_limiter
+    from app.services.sms import sms_code_service
+
+    _login_limiter.clear()
+    sender = sms_code_service.sender
+    if hasattr(sender, "sent"):
+        sender.sent.clear()
     yield

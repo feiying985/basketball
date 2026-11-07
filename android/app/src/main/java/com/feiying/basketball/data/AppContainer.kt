@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
 
 /** Video selected for the current capture flow, before a local record is created. */
 class NewAnalysisSession {
@@ -35,22 +36,55 @@ class AppContainer(context: Context) {
         appContext,
         AppDatabase::class.java,
         AppDatabase.NAME,
-    ).addMigrations(AppDatabase.MIGRATION_1_2).fallbackToDestructiveMigration().build()
+    ).addMigrations(
+        AppDatabase.MIGRATION_1_2,
+        AppDatabase.MIGRATION_2_3,
+    ).fallbackToDestructiveMigration().build()
 
     val settingsStore = SettingsStore(appContext)
     val newAnalysisSession = NewAnalysisSession()
 
-    private val api = AnalysisApi(
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val tokenProvider = TokenProvider()
+
+    lateinit var authRepository: AuthRepository
+        private set
+
+    private val authInterceptor = AuthInterceptor(tokenProvider) {
+        authRepository.onUnauthorized()
+    }
+    private val httpClient = OkHttpClient.Builder()
+        .addInterceptor(authInterceptor)
+        .build()
+
+    private val analysisApi = AnalysisApi(
         json = json,
         baseUrlProvider = { settingsStore.baseUrl.first() },
+        client = httpClient,
     )
-    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val repository = AnalysisRepository(
         dao = database.analysisRecordDao(),
-        api = api,
+        api = analysisApi,
         settingsStore = settingsStore,
         json = json,
-        scope = repositoryScope,
+        scope = scope,
     )
+
+    fun authToken(): String? = tokenProvider.token
+
+    init {
+        val authApi = AuthApi(
+            json = json,
+            baseUrlProvider = { settingsStore.baseUrl.first() },
+            client = httpClient,
+        )
+        authRepository = AuthRepository(
+            api = authApi,
+            store = KeystoreSessionStore(appContext),
+            tokenProvider = tokenProvider,
+            scope = scope,
+            onSessionChanged = { user -> repository.setOwner(user?.id) },
+        )
+    }
 }

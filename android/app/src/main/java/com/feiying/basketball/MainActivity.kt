@@ -6,7 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.feiying.basketball.ui.BasketballApp
+import com.feiying.basketball.ui.AuthGate
 import com.feiying.basketball.ui.theme.BasketballTheme
 
 class MainActivity : ComponentActivity() {
@@ -20,7 +20,7 @@ class MainActivity : ComponentActivity() {
         val container = (application as BasketballApplication).container
         setContent {
             BasketballTheme {
-                BasketballApp(container = container)
+                AuthGate(container = container)
             }
         }
     }

@@ -24,6 +24,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.feiying.basketball.R
 import com.feiying.basketball.data.AppContainer
+import com.feiying.basketball.ui.account.AccountRoute
+import com.feiying.basketball.ui.account.ChangePasswordRoute
 import com.feiying.basketball.ui.analysis.AnalysisRoute
 import com.feiying.basketball.ui.clip.ClipPlayerRoute
 import com.feiying.basketball.ui.history.HistoryRoute
@@ -57,7 +59,26 @@ fun BasketballApp(container: AppContainer) {
             modifier = Modifier.padding(innerPadding),
         ) {
             composable(Routes.HOME) {
-                HomeRoute(container = container, navController = navController)
+                HomeRoute(
+                    container = container,
+                    navController = navController,
+                    onOpenAccount = { navController.navigate(Routes.ACCOUNT) },
+                )
+            }
+            composable(Routes.ACCOUNT) {
+                AccountRoute(
+                    container = container,
+                    onBack = { navController.popBackStack() },
+                    onChangePassword = {
+                        navController.navigate(Routes.CHANGE_PASSWORD)
+                    },
+                )
+            }
+            composable(Routes.CHANGE_PASSWORD) {
+                ChangePasswordRoute(
+                    authRepository = container.authRepository,
+                    onBack = { navController.popBackStack() },
+                )
             }
             composable(Routes.HISTORY) {
                 HistoryRoute(container = container, navController = navController)

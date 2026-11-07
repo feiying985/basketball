@@ -232,7 +232,7 @@ def test_other_users_clip_returns_404() -> None:
 def test_health_reports_clip_availability() -> None:
     payload = client.get("/api/v1/health").json()
 
-    assert payload["version"] == "0.5.0"
+    assert payload["version"] == "0.6.0"
     assert payload["clips"] is False
 
 

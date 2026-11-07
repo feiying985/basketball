@@ -117,6 +117,9 @@ fun ClipPlayerRoute(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var clipUrl by remember(jobId, index) { mutableStateOf<String?>(null) }
+    var clipHeaders by remember(jobId, index) {
+        mutableStateOf<Map<String, String>>(emptyMap())
+    }
     var loadFailed by remember(jobId, index) { mutableStateOf(false) }
     var saveState by remember { mutableStateOf<ClipSaveState>(ClipSaveState.Idle) }
     var downloadJob by remember { mutableStateOf<Job?>(null) }
@@ -124,6 +127,9 @@ fun ClipPlayerRoute(
     LaunchedEffect(jobId, index) {
         try {
             clipUrl = repository.clipUrl(jobId, index)
+            clipHeaders = container.authToken()?.let { token ->
+                mapOf("Authorization" to "Bearer $token")
+            } ?: emptyMap()
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -240,6 +246,7 @@ fun ClipPlayerRoute(
                 Formatters.shotTime(clip.endSeconds),
             ),
             clipUrl = clipUrl,
+            clipHeaders = clipHeaders,
             saving = saveState !is ClipSaveState.Idle,
             onBack = onBack,
             onSave = { requestSave() },
@@ -319,6 +326,7 @@ fun ClipPlayerContent(
     shotTime: String,
     rangeText: String,
     clipUrl: String?,
+    clipHeaders: Map<String, String> = emptyMap(),
     saving: Boolean,
     onBack: () -> Unit,
     onSave: () -> Unit,
@@ -356,6 +364,7 @@ fun ClipPlayerContent(
                 playerSlot != null -> playerSlot(Modifier.fillMaxSize())
                 clipUrl != null -> VideoPlayer(
                     uri = Uri.parse(clipUrl),
+                    headers = clipHeaders,
                     modifier = Modifier.fillMaxSize(),
                 )
 
