@@ -5,6 +5,8 @@ object Routes {
     const val HISTORY = "history"
     const val RECORD = "record"
     const val REVIEW = "review"
+    const val ACCOUNT = "account"
+    const val CHANGE_PASSWORD = "change-password"
 
     const val ANALYSIS_PATTERN = "analysis/{recordId}"
     const val RESULT_PATTERN = "result/{recordId}"

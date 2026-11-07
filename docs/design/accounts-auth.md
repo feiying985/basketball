@@ -1,9 +1,10 @@
 # 手机号注册登录与 App 登录门禁方案
 
-> - **状态**：设计稿 v1（待评审）
+> - **状态**：已实现（server/App 0.6.0）；真实阿里云短信待配置
 > - **日期**：2026-11-08
 > - **范围**：服务端账号/短信验证码/改密接口，Android 登录、注册、改密、退出与登录门禁。
-> - **不包含**：代码实现、真实短信通道开通、云端历史同步、账号注销与完整的隐私合规页面。
+> - **不包含**：真实短信通道开通（代码已支持，待签名/模板/AccessKey）、云端历史同步、
+>   账号注销与完整的隐私合规页面。
 > - **现状基线**：`server` 0.5.0 + `main`。服务端已有用户名/密码账号、Bearer 会话和任务归属；
 >   Android App 仍匿名调用分析接口，没有登录界面、token 存储和登录门禁。
 >   相关现状见 [server-persistence-accounts.md](../server-persistence-accounts.md) 与
@@ -37,7 +38,9 @@
   本方案按新需求把它改为**登录门禁**：首次启动先登录/注册，进入 App 后的录制、上传、结果、历史流程不变。
 - [server-persistence-accounts.md](../server-persistence-accounts.md) 的服务端账号/token 设计继续沿用；
   本文在它之上增加手机号、短信验证码、改密和 App 接入。
-- 本文只做设计，不改代码；实现时同步更新上述两份文档和 README。
+- 本文最初是设计稿；按 PR #12 的评论确认后已实现服务端与 App，并同步更新上述两份文档和 README。
+- 设计确认结果：手机号为主账号、用户名可选；短信使用阿里云（凭证后续提供，开发先用 dev）；
+  忘记密码重置本期一起做；旧账号绑定手机号放 P1。
 
 ## 2. 目标与非目标
 
@@ -498,7 +501,7 @@ sequenceDiagram
 | --- | --- |
 | `app/services/sms.py`（新增） | `SmsSender`、`AliyunSmsSender`、`DevSmsSender`、`SmsCodeService`、发码限流 |
 | `app/services/accounts.py` | 增加 `find_by_account`、`get_by_phone`、`create_phone_user`、`set_password`、`revoke_other_sessions`、`revoke_all_sessions` |
-| `app/api/auth.py` | 新增 4 个路由；调整注册/登录 payload |
+| `app/api/auth.py` | 新增短信码、验证码登录、改密、重置等路由；调整注册/登录 payload |
 | `app/schemas.py` | 新增 `SmsCodeRequest`、`RegisterRequest`、`LoginRequest`、`CodeLoginRequest`、`ChangePasswordRequest`、`ResetPasswordRequest`；`User` 增加 `phone`、`display_name`，`username` 改可选 |
 | `app/services/db.py` | `sms_codes` 建表、`users` 迁移、清理任务 |
 | `app/config.py` | 短信、限流、验证码配置 |
@@ -663,11 +666,11 @@ sealed interface AuthState {
 - `VideoPlayer` 已经支持 `headers: Map<String, String>`，内部用
   `DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)` 创建 MediaSource
   （`ui/common/Components.kt`）；当前 `ClipPlayerScreen` 调用时没有传 headers。
-- 片段页把 `Authorization: Bearer <token>` 作为 headers 传给 `VideoPlayer` 即可，播放器本身不用改。
-- `VideoPlayer` 目前只有 `onPlayerReady`，没有错误回调；实现时增加 `onPlayerError`（`PlaybackException`），
-  在播放失败时提示重试，能识别为 HTTP 401（如 `InvalidResponseCodeException.responseCode == 401`）时
-  触发重新登录并跳登录页。
-- `downloadClip` 继续走 `AnalysisApi`，复用同一个拦截器。
+- 片段页把 `Authorization: Bearer <token>` 作为 headers 传给 `VideoPlayer`，播放器本身不用改。
+- `VideoPlayer` 目前只有 `onPlayerReady`，没有错误回调；本次已保证正常登录态可播放，
+  若 token 过期，播放会失败，用户可通过退出/重新登录恢复。后续可增加 `onPlayerError`
+  （`PlaybackException`，识别 `InvalidResponseCodeException.responseCode == 401`）自动跳登录。
+- `downloadClip` 继续走 `AnalysisApi`，复用同一个拦截器；下载遇到 401 会触发全局登出。
 - 如果后续要分享片段，改为服务端签发短时效 URL（P1），不要把长期 Bearer token 放进 URL。
 
 ### 8.7 本地历史归属
@@ -757,6 +760,8 @@ sealed interface AuthState {
 - 重置：成功、验证码错误、未注册手机号、全部会话被吊销。
 - 鉴权开关：`REQUIRE_AUTH=true` 时匿名上传/查询/片段都 `401`，带 token 正常。
 - 迁移：旧库启动后旧用户名可登录、旧会话可用、新用户可注册、`sms_codes` 正常创建。
+- 新增 `tests/test_sms.py` 覆盖验证码摘要、重发/限流、过期、错误次数、发新码失效、绑定手机号。
+- 新增 `tests/test_db_migration.py` 覆盖旧 users 表重建和旧会话。
 - 回归：现有任务归属、片段、匿名兼容测试全部通过。
 
 测试中用假 `SmsSender` 记录验证码，不访问真实短信服务；`BASKETBALL_SMS_PROVIDER=dev` 时不依赖阿里云 SDK。
@@ -812,14 +817,21 @@ sealed interface AuthState {
 - 正式域名 + HTTPS 证书（生产登录必须）。
 - 用户协议/隐私政策文案（注册页勾选；可先占位，发布前补齐）。
 
-## 13. 待确认
+## 13. 确认结果与后续
 
-以下按推荐默认值写；如果同意，实现阶段直接按此执行：
+PR #12 评论已确认：
 
-1. **账号形态**：推荐「手机号为主账号，用户名可选，旧用户名账号继续兼容」。
-   如果你希望注册时必须设置用户名（账号 + 密码登录用用户名），注册页增加一个用户名字段即可，本方案已按可选用户名设计接口。
-2. **短信服务商**：推荐阿里云短信（服务端已在阿里云 ECS）。
-   需要你提供已审核的签名、模板 CODE 和 RAM AccessKey；在提供前用 `dev` 模式开发。
-3. **忘记密码**：推荐本期一起做「手机验证码重置密码」；如果只想做登录后改密，可以去掉该接口和页面。
-4. **旧账号绑定手机号**：推荐放到 P1，不阻塞本次上线；旧账号先用用户名 + 密码登录。
-5. **实名/合规**：手机号注册涉及隐私政策与个人信息收集告知；App 上架前需要补齐协议文案和账号注销入口（P1）。
+1. **账号形态**：可以——手机号为主账号，用户名可选，旧用户名账号继续兼容。
+2. **短信服务商**：可以——使用阿里云短信；签名、模板 CODE 和 RAM AccessKey 后续提供，
+   开发/联调阶段使用 `dev`（验证码写服务端日志）。
+3. **忘记密码**：一起做——已实现手机验证码重置密码。
+4. **旧账号绑定手机号**：放 P1——旧账号先用用户名 + 密码登录。
+5. **合规**：手机号注册涉及隐私政策与个人信息收集告知；App 上架前仍需补齐协议文案和账号注销入口（P1）。
+
+上线前还需要：
+
+- 在阿里云控制台提交并审核短信签名/模板，配置 `BASKETBALL_SMS_PROVIDER=aliyun`、
+  `BASKETBALL_SMS_ACCESS_KEY_ID`、`..._SECRET`、`BASKETBALL_SMS_SIGN_NAME`、
+  `BASKETBALL_SMS_TEMPLATE_CODE`、`BASKETBALL_SMS_CODE_PEPPER`。
+- 服务端设置 `BASKETBALL_ENV=production` 和 `BASKETBALL_REQUIRE_AUTH=true`，重启后检查 `/health`。
+- App release 构建指向正式 HTTPS 域名；补一份用户协议/隐私政策文本。

@@ -15,6 +15,7 @@ from app.config import settings
 from app.services.accounts import user_store
 from app.services.clips import clip_service
 from app.services.jobs import job_store
+from app.services.sms import sms_code_service
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # previous process is stale.  Results already persisted stay readable.
     job_store.fail_interrupted()
     user_store.purge_expired_sessions()
+    sms_code_service.cleanup()
+    if settings.sms_provider == "dev":
+        logger.warning(
+            "短信服务使用 dev provider：验证码只写日志，不会真正发送；生产环境必须配置阿里云短信"
+        )
     if not clip_service.available:
         logger.warning(
             "ffmpeg 不可用（%s），进球片段将不会生成；健康检查 clips=false",

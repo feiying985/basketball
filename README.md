@@ -2,12 +2,12 @@
 
 安卓端 + 服务端 monorepo，目标是把「打篮球 → 录制视频 → 自动识别进球」做成可用的 MVP。
 
-> **当前状态：App 端 MVP 主流程已实现，服务端已接入经典 CV 进球识别基线、任务持久化、账号体系与进球片段剪辑。**
-> 安卓端支持录制/相册选择、视频校验、上传与轮询、结果页、进球片段播放/保存和本地历史记录；
+> **当前状态：App 端 MVP 主流程已实现，服务端已接入经典 CV 进球识别基线、任务持久化、手机号账号体系与进球片段剪辑。**
+> 安卓端支持手机号验证码注册、账号/验证码登录、修改密码、登录门禁、录制/相册选择、
+> 视频校验、上传与轮询、结果页、进球片段播放/保存和本地历史记录；
 > 服务端基于 OpenCV 做颜色检测 + 轨迹 + 穿筐判定，无需模型文件即可运行；
 > 分析完成后用系统 ffmpeg 为每个命中球生成前后 5 秒的 MP4；
-> 分析任务和账号保存到 SQLite，重启不丢结果，并支持注册/登录与任务归属
-> （默认不强制登录，现有 App 无需改动）。
+> 分析任务和账号保存到 SQLite，重启不丢结果，并支持注册/登录与任务归属。
 > GitHub 现成方案调研见 [docs/research/shot-recognition.md](docs/research/shot-recognition.md)，
 > 算法与限制见 [docs/shot-detection.md](docs/shot-detection.md)，
 > 进球片段设计见 [docs/shot-clips.md](docs/shot-clips.md)，
@@ -58,16 +58,20 @@ MVP 先做**服务端离线分析**：App 只负责采集/上传，识别逻辑�
 端侧实时识别放到后续阶段。
 
 任务状态、识别结果和账号保存在服务端 SQLite 中，服务重启后仍可查询；登录用户的任务与账号绑定，
-不同账号之间互相不可见。默认不强制登录，以兼容现有 App，生产环境可通过
-`BASKETBALL_REQUIRE_AUTH=true` 打开强制鉴权。设计细节见
+不同账号之间互相不可见。App 0.6.0 已接入登录门禁；生产环境设置
+`BASKETBALL_REQUIRE_AUTH=true` 让服务端也强制鉴权。设计细节见
 [docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)。
 
 ## App 端流程
 
-主页「开始分析」→ 录制或从相册选择 → 确认视频（格式、大小、时长校验）→ 上传并轮询任务 →
-结果页查看命中/未中时间点与命中率 → 结果自动保存到本地记录。底部导航保留「分析」「记录」两个入口。
+首次启动先登录/注册：手机号 + 验证码 + 密码注册，支持「账号（手机号/用户名）+ 密码」或
+「手机号 + 验证码」登录；登录后才进入主页。主页「开始分析」→ 录制或从相册选择 → 确认视频
+（格式、大小、时长校验）→ 上传并轮询任务 → 结果页查看命中/未中时间点与命中率 →
+结果自动保存到本地记录。底部导航保留「分析」「记录」两个入口，右上角进入账号页。
 
 - 界面采用固定的黑色主题（近黑背景 + 橙色强调），不跟随系统浅色设置；
+- 账号页支持修改密码和退出登录；忘记密码可通过手机验证码重置；
+- 登录 token 使用 Android Keystore 加密后存 DataStore；401 会自动回登录页；
 - 录制使用 CameraX，最长 **20 分钟**，少于 1 秒不生成视频；
 - 相册选择使用系统 Photo Picker，不需要存储权限，选中后复制到应用缓存；
 - 上传上限与服务端一致（200 MB），显示真实字节进度，可取消；
@@ -76,8 +80,9 @@ MVP 先做**服务端离线分析**：App 只负责采集/上传，识别逻辑�
 - 结果页在命中事件旁显示「片段」，顶部提供「进球片段」卡片；点击进入播放页，
   可**保存到相册**（Android 10+ 无需存储权限，Android 8-9 首次保存时申请）；
 - 本地历史使用 Room 保存结果快照，服务端重启后仍可回看；
-- 服务端地址默认由 `build.gradle.kts` 配置。真机调试需要改地址时，在首页**长按服务状态**打开开发者设置，
-  普通用户看不到该入口。
+- 服务端地址默认由 `build.gradle.kts` 配置。真机调试需要改地址时，在首页**长按服务状态**打开开发者设置；
+  未登录时可在登录页**长按标题**打开同一设置，普通用户看不到该入口。
+- release 构建关闭了 cleartext HTTP，正式包必须使用 HTTPS 服务端地址（debug 仍可访问模拟器地址）。
 
 ## 快速开始
 
@@ -116,8 +121,12 @@ cd android
 | `GET` | `/api/v1/analyses` | 当前用户的任务列表（需要登录） |
 | `GET` | `/api/v1/analyses/{id}` | 查询任务状态、处理阶段与识别结果 |
 | `GET` | `/api/v1/analyses/{id}/clips/{index}` | 播放/下载一个进球片段；支持 HTTP Range（ExoPlayer 可拖动） |
-| `POST` | `/api/v1/auth/register` | 注册并返回 Bearer token |
-| `POST` | `/api/v1/auth/login` | 登录并返回 Bearer token |
+| `POST` | `/api/v1/auth/sms-code` | 发送注册/登录/重置密码验证码 |
+| `POST` | `/api/v1/auth/register` | 手机号 + 验证码 + 密码注册并返回 Bearer token |
+| `POST` | `/api/v1/auth/login` | 账号（手机号/用户名）+ 密码登录 |
+| `POST` | `/api/v1/auth/login/code` | 手机号 + 验证码登录 |
+| `POST` | `/api/v1/auth/password` | 已登录修改密码 |
+| `POST` | `/api/v1/auth/password/reset` | 手机验证码重置密码 |
 | `GET` | `/api/v1/auth/me` | 当前登录用户 |
 | `POST` | `/api/v1/auth/logout` | 吊销当前 token |
 
@@ -144,17 +153,22 @@ cd android
 ### 账号与持久化
 
 ```text
-POST /api/v1/auth/register  →  { access_token, user }
+POST /api/v1/auth/sms-code   →  发送短信验证码
+POST /api/v1/auth/register   →  { access_token, user }
+POST /api/v1/auth/login      →  { access_token, user }
 Authorization: Bearer <token>
-POST /api/v1/analyses       →  任务归属当前账号
-GET  /api/v1/analyses       →  当前账号的历史任务
+POST /api/v1/analyses        →  任务归属当前账号
+GET  /api/v1/analyses        →  当前账号的历史任务
 ```
 
-- 任务状态与识别结果写入 SQLite，重启后 `completed`/`failed` 的任务仍可查询；
-- 重启时仍处于 `queued`/`processing` 的任务会标记为 `failed`（分析是进程内任务，不支持续跑）；
+- 注册必须通过手机号验证码；新账号以手机号为主身份，用户名可选，旧用户名账号继续兼容；
+- 登录支持「账号（手机号/用户名）+ 密码」和「手机号 + 验证码」；
+- 登录后可在账号页修改密码；忘记密码可用手机验证码重置；
+- 验证码 5 分钟有效、单次使用、最多 5 次尝试，并按手机号/IP/全站限流；
 - 密码用 scrypt 加盐哈希，token 只在数据库保存 SHA-256 摘要，默认 30 天过期；
-- 默认 `BASKETBALL_REQUIRE_AUTH=false`：不带 token 仍可上传/查询，便于现有 App 使用；
-  设为 `true` 后分析相关接口都要求登录。
+- Android App 登录后才可进入业务页面，token 使用 Android Keystore 加密存储；
+- 开发/测试默认使用 `BASKETBALL_SMS_PROVIDER=dev`（验证码只写服务端日志），生产切换阿里云短信；
+- 生产环境应设置 `BASKETBALL_REQUIRE_AUTH=true`，服务端也强制分析接口登录。
 
 完整接口、数据表、重启语义与限制见
 [docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)。
@@ -179,8 +193,20 @@ GET  /api/v1/analyses       →  当前账号的历史任务
 | `BASKETBALL_MAX_UPLOAD_BYTES` | `209715200` | 单文件上传上限（字节） |
 | `BASKETBALL_UPLOAD_DIR` | 系统临时目录 | 上传视频保存目录 |
 | `BASKETBALL_DB_PATH` | `<临时目录>/basketball-data/basketball.db` | SQLite 数据库文件；生产建议持久化目录 |
-| `BASKETBALL_REQUIRE_AUTH` | `false` | `true` 时分析相关接口都要求 Bearer token |
+| `BASKETBALL_REQUIRE_AUTH` | `false` | `true` 时分析相关接口都要求 Bearer token；生产建议开启 |
 | `BASKETBALL_TOKEN_TTL_DAYS` | `30` | 登录 token 有效天数；`0` 表示不过期 |
+| `BASKETBALL_ENV` | `development` | `production` 时禁止使用 dev 短信实现 |
+| `BASKETBALL_SMS_PROVIDER` | `dev` | `dev`（日志输出验证码）或 `aliyun`（真实短信） |
+| `BASKETBALL_SMS_ACCESS_KEY_ID` / `..._SECRET` | 空 | 阿里云 RAM AccessKey；生产必填 |
+| `BASKETBALL_SMS_SIGN_NAME` / `..._TEMPLATE_CODE` | 空 | 已审核的短信签名和模板 CODE |
+| `BASKETBALL_SMS_CODE_PEPPER` | 空 | 验证码 HMAC 密钥；生产必填 |
+| `BASKETBALL_SMS_CODE_TTL_SECONDS` | `300` | 验证码有效期；默认 5 分钟 |
+| `BASKETBALL_SMS_RESEND_SECONDS` | `60` | 同一手机号重发间隔 |
+| `BASKETBALL_SMS_MAX_ATTEMPTS` | `5` | 单个验证码最大尝试次数 |
+| `BASKETBALL_SMS_PHONE_HOURLY_LIMIT` / `..._DAILY_LIMIT` | `5` / `10` | 单手机号每小时/每天发码上限 |
+| `BASKETBALL_SMS_IP_HOURLY_LIMIT` | `30` | 单 IP 每小时发码上限 |
+| `BASKETBALL_SMS_DAILY_LIMIT` | `1000` | 全站每天发码上限 |
+| `BASKETBALL_LOGIN_MAX_FAILURES` / `..._WINDOW_SECONDS` | `10` / `900` | 登录失败次数/窗口 |
 | `BASKETBALL_CLIP_ENABLED` | `true` | 关闭后不生成进球片段，识别任务照常完成 |
 | `BASKETBALL_CLIP_PRE_SECONDS` / `BASKETBALL_CLIP_POST_SECONDS` | `5` / `5` | 进球前后各截取的秒数（0-30） |
 | `BASKETBALL_CLIP_DIR` | `<upload_dir>/clips` | 片段保存目录 |
@@ -216,10 +242,9 @@ CI 会在 PR 上分别运行服务端测试和安卓构建：
    技术路线与候选项目见 [调研文档](docs/research/shot-recognition.md)。
 2. **结果人工纠正**：在结果页本地覆盖命中/未中，不写回服务端（P1）。
    App 端交互流程设计见 [docs/design/app-interaction-flow.md](docs/design/app-interaction-flow.md)。
-3. **账号接入 App 与任务队列**：服务端已提供注册/登录、任务列表和持久化结果；下一步在 App
-   增加登录与 token 存储，并把 `BackgroundTasks` 换成可持久化的队列（多实例部署前必须做）。
-   手机号注册、验证码登录、修改密码与 App 登录门禁的设计见
-   [docs/design/accounts-auth.md](docs/design/accounts-auth.md)。
+3. **任务队列与账号增强**：App 登录门禁、手机号注册、验证码登录和改密已经接入；下一步把
+   `BackgroundTasks` 换成可持久化的队列（多实例部署前必须做），并补齐旧账号绑定手机号。
+   设计见 [docs/design/accounts-auth.md](docs/design/accounts-auth.md)。
 4. **数据集与评估**：公开数据集冷启动 + 自采场地数据微调，建立逐球准确率评估集。
 5. **端侧实时**：TFLite / NCNN 集成（第二阶段）。
 

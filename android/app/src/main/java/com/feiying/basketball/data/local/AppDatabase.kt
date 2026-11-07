@@ -28,27 +28,34 @@ data class AnalysisRecordEntity(
     val errorCode: String?,
     val errorDetail: String?,
     val updatedAt: Long,
+    val ownerUserId: String? = null,
 )
 
 @Dao
 interface AnalysisRecordDao {
-    @Query("SELECT * FROM analysis_records ORDER BY createdAt DESC")
-    fun observeAll(): Flow<List<AnalysisRecordEntity>>
+    @Query("SELECT * FROM analysis_records WHERE ownerUserId = :ownerId ORDER BY createdAt DESC")
+    fun observeByOwner(ownerId: String): Flow<List<AnalysisRecordEntity>>
 
-    @Query("SELECT * FROM analysis_records WHERE localId = :localId")
-    suspend fun get(localId: String): AnalysisRecordEntity?
+    @Query(
+        "SELECT * FROM analysis_records WHERE localId = :localId AND ownerUserId = :ownerId",
+    )
+    suspend fun get(localId: String, ownerId: String): AnalysisRecordEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(record: AnalysisRecordEntity)
 
+    @Query("UPDATE analysis_records SET ownerUserId = :ownerId WHERE ownerUserId IS NULL")
+    suspend fun claimUnowned(ownerId: String)
+
     @Query(
         "UPDATE analysis_records SET status = :newStatus, updatedAt = :updatedAt " +
-            "WHERE status = :oldStatus",
+            "WHERE status = :oldStatus AND ownerUserId = :ownerId",
     )
     suspend fun updateStatusForAll(
         oldStatus: String,
         newStatus: String,
         updatedAt: Long,
+        ownerId: String,
     )
 
     @Query(
@@ -112,13 +119,13 @@ interface AnalysisRecordDao {
         updatedAt: Long,
     )
 
-    @Query("DELETE FROM analysis_records WHERE localId = :localId")
-    suspend fun delete(localId: String)
+    @Query("DELETE FROM analysis_records WHERE localId = :localId AND ownerUserId = :ownerId")
+    suspend fun delete(localId: String, ownerId: String)
 }
 
 @Database(
     entities = [AnalysisRecordEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -131,6 +138,17 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE analysis_records ADD COLUMN hoopRoi TEXT")
+            }
+        }
+
+        /** Scopes local history to the signed-in account. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE analysis_records ADD COLUMN ownerUserId TEXT")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_analysis_records_owner " +
+                        "ON analysis_records(ownerUserId, createdAt DESC)",
+                )
             }
         }
     }

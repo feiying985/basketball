@@ -68,6 +68,7 @@ class HomeScreenshotTest {
                 onOpenRecord = {},
                 onCheckHealth = {},
                 onDeveloperSettings = {},
+                onOpenAccount = {},
             )
         }
         capture("home-light.png")
@@ -83,6 +84,7 @@ class HomeScreenshotTest {
                 onOpenRecord = {},
                 onCheckHealth = {},
                 onDeveloperSettings = {},
+                onOpenAccount = {},
             )
         }
         capture("home-after.png")
@@ -98,6 +100,7 @@ class HomeScreenshotTest {
                 onOpenRecord = {},
                 onCheckHealth = {},
                 onDeveloperSettings = {},
+                onOpenAccount = {},
             )
         }
         capture("home-with-record.png")

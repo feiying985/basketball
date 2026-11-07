@@ -103,8 +103,8 @@ ffmpeg -hide_banner -loglevel error -nostdin \
 
 - 旧 App 连新服务端：`ignoreUnknownKeys` 忽略 `clip`/`stage`/`clip_note`，行为不变。
 - 新 App 连旧服务端：没有 `clip` 字段，按无片段处理，不显示片段区。
-- `BASKETBALL_REQUIRE_AUTH=true` 时片段接口同样需要 token；当前 App 未接入登录，
-  播放器已预留 `headers` 参数，后续接 token 时补上即可。
+- `BASKETBALL_REQUIRE_AUTH=true` 时片段接口同样需要 token；App 0.6.0 起在播放/下载片段时
+  传入 `Authorization` 头，ExoPlayer 通过 `VideoPlayer` 已有的 `headers` 参数携带。
 
 ## 8. 覆盖的测试
 
