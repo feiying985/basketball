@@ -30,7 +30,7 @@
 │   └── tests/
 ├── docs/
 │   ├── research/             # 进球识别方案调研
-│   ├── design/               # App 交互流程设计
+│   ├── design/               # App 交互流程与账号方案设计
 │   ├── shot-detection.md     # 算法与限制说明
 │   ├── shot-clips.md         # 进球片段生成与 App 播放
 │   ├── server-persistence-accounts.md  # 任务持久化与账号体系
@@ -218,6 +218,8 @@ CI 会在 PR 上分别运行服务端测试和安卓构建：
    App 端交互流程设计见 [docs/design/app-interaction-flow.md](docs/design/app-interaction-flow.md)。
 3. **账号接入 App 与任务队列**：服务端已提供注册/登录、任务列表和持久化结果；下一步在 App
    增加登录与 token 存储，并把 `BackgroundTasks` 换成可持久化的队列（多实例部署前必须做）。
+   手机号注册、验证码登录、修改密码与 App 登录门禁的设计见
+   [docs/design/accounts-auth.md](docs/design/accounts-auth.md)。
 4. **数据集与评估**：公开数据集冷启动 + 自采场地数据微调，建立逐球准确率评估集。
 5. **端侧实时**：TFLite / NCNN 集成（第二阶段）。
 
