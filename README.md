@@ -11,7 +11,8 @@
 > GitHub 现成方案调研见 [docs/research/shot-recognition.md](docs/research/shot-recognition.md)，
 > 算法与限制见 [docs/shot-detection.md](docs/shot-detection.md)，
 > 进球片段设计见 [docs/shot-clips.md](docs/shot-clips.md)，
-> 持久化与账号设计见 [docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)。
+> 持久化与账号设计见 [docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)，
+> 评估与标注见 [server/tools/README.md](server/tools/README.md)。
 
 ## 目录结构
 
@@ -230,6 +231,19 @@ cd server && python -m pytest -q     # 服务端接口测试
 cd android && ./gradlew :app:assembleDebug        # 安卓编译（需要 Android SDK）
 cd android && ./gradlew :app:testDebugUnitTest    # 安卓单元测试（校验、格式化、轮询策略、JSON）
 ```
+
+真实视频的识别评估（需要本地标注，视频和标注不入库）：
+
+```bash
+cd server
+python -m tools.evaluate \
+  --dataset /path/to/videos \
+  --labels /path/to/labels.csv \
+  --detector classical \
+  --out reports/baseline
+```
+
+格式、标注步骤和指标定义见 [server/tools/README.md](server/tools/README.md)。
 
 CI 会在 PR 上分别运行服务端测试和安卓构建：
 [.github/workflows/server-ci.yml](.github/workflows/server-ci.yml)、
