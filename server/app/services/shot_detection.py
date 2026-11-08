@@ -56,11 +56,18 @@ class StubShotDetector:
         )
 
 
-def create_detector() -> ShotDetector:
-    backend = settings.detector_backend
-    if backend in {"stub", "none"}:
+def create_detector(backend: str | None = None) -> ShotDetector:
+    """Build a detector.
+
+    ``backend`` is optional so evaluation tooling can select a backend without
+    changing the process-wide ``BASKETBALL_DETECTOR`` setting; omitting it keeps
+    the existing deployment behaviour.
+    """
+
+    selected = (backend or settings.detector_backend).strip().lower()
+    if selected in {"stub", "none"}:
         return StubShotDetector()
-    if backend in {"classical", "opencv"}:
+    if selected in {"classical", "opencv"}:
         from app.services.classical_shot_detection import (
             ClassicalShotDetector,
             ShotDetectionConfig,
@@ -82,7 +89,7 @@ def create_detector() -> ShotDetector:
             )
         )
     raise ValueError(
-        f"未知的检测器后端: {backend!r}；可选值: classical, stub"
+        f"未知的检测器后端: {selected!r}；可选值: classical, stub"
     )
 
 
