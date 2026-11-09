@@ -35,7 +35,7 @@
 │   ├── shot-detection.md     # 算法与限制说明
 │   ├── shot-clips.md         # 进球片段生成与 App 播放
 │   ├── server-persistence-accounts.md  # 任务持久化与账号体系
-│   └── deployment-verification.md  # 部署与验证指引
+│   └── deployment-verification.md  # 阿里云部署、运维与验证指引
 └── .github/workflows/        # 服务端测试 + 安卓构建 CI
 ```
 
@@ -112,6 +112,12 @@ cd android
 
 模拟器通过 `http://10.0.2.2:8000` 访问宿主机服务；真机调试时可在首页长按服务状态打开开发者设置修改地址，
 或把 `android/app/build.gradle.kts` 里的 `SERVER_BASE_URL` 改成电脑的局域网 IP。
+
+## 部署
+
+服务端部署到阿里云 ECS 的完整步骤（Ubuntu 24.04 + Nginx + systemd + SQLite，含短信配置、
+备份恢复、升级回滚、日志监控和验收清单）见
+[docs/deployment-verification.md](docs/deployment-verification.md)。
 
 ## API
 
