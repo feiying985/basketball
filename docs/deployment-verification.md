@@ -1,10 +1,12 @@
-# 后端部署与进球识别验证指引
+# 后端阿里云部署与进球识别验证指引
 
 > - **适用代码**：`server` 0.6.0（经典 CV 检测器 + SQLite 任务持久化 + 手机号账号/短信验证码 +
 >   进球片段）；安卓端为支持登录门禁的 App。
-> - **更新日期**：2026-11-08
+> - **更新日期**：2026-11-09
 > - **目标环境**：阿里云 ECS（Ubuntu 24.04 LTS，2 vCPU / 2 GB 起）
-> - **文档定位**：把「部署后端 → 验证接口 → 验证进球识别 → 用 App 走通全流程」串成一次可执行的验收；同时说明当前完成度和还缺的功能。
+> - **文档定位**：前半部分（第 1–5 节）是阿里云 ECS 部署手册，后半部分（第 6–9 节）验证接口、
+>   识别效果和 App 全流程；运维相关的备份、升级、监控、安全加固在 5.8–5.11。只做部署时按
+>   [0.3 部署最短路径](#03-部署最短路径) 走。
 > - **0.3.0 变更**：任务状态与结果写入 SQLite（重启不丢），新增注册/登录/Bearer token 与任务归属。
 >   默认 `BASKETBALL_REQUIRE_AUTH=false`，现有 App 不需要改；设计与接口见
 >   [server-persistence-accounts.md](server-persistence-accounts.md)。
@@ -73,6 +75,28 @@
   2. 端侧实时识别；
   3. 云端历史同步、分享、多人统计。
 
+### 0.3 部署最短路径
+
+只想先把后端跑起来、暂不评估识别效果时，按下面 8 步走；每一步的完整命令都在对应小节。
+
+1. **买 ECS**：Ubuntu 24.04 LTS，2 vCPU / 2 GB / 40 GB 系统盘起，安全组只放行 22、80、443
+   （[2.1](#21-实例与镜像)、[2.3](#23-安全组)）。
+2. **装系统依赖**：`python3`、`python3-venv`、`nginx`、`git`、`curl`、`jq`、`ffmpeg`、`sqlite3`
+   （[第 3 节](#3-安装系统依赖)）。
+3. **放代码、装 Python 依赖**：建运行用户和持久化目录，克隆仓库，创建虚拟环境
+   （[第 4 节](#4-获取代码并安装依赖)）。
+4. **选部署模式**（不要跳过）：
+   - 验收模式：`BASKETBALL_ENV=development` + `BASKETBALL_SMS_PROVIDER=dev` +
+     `BASKETBALL_REQUIRE_AUTH=false`，验证码只写日志，最快跑通；
+   - 生产模式：`BASKETBALL_ENV=production` + 阿里云短信 + `BASKETBALL_REQUIRE_AUTH=true`，
+     需要提前准备已审核的签名/模板和 RAM AccessKey（[5.1](#51-环境变量)）。
+5. **写 `/etc/basketball.env`，启动 systemd 服务**（[5.1](#51-环境变量)、[5.2](#52-systemd-服务)）。
+6. **配 Nginx 反向代理**；用域名时加 HTTPS（[5.3](#53-nginx-反向代理)、[5.4](#54-https有域名时强烈建议release-包必须)）。
+7. **健康检查**：`curl http://<SERVER>/api/v1/health`，确认 `version=0.6.0`、`detector=classical`、
+   `clips=true`（[6.1](#61-健康检查)）。
+8. **配好备份、日志监控和安全加固**，再按[第 9 节](#9-端到端验收清单)验收
+   （[5.8](#58-数据备份与恢复)、[5.10](#510-日志与监控)、[5.11](#511-安全加固)）。
+
 ---
 
 ## 1. 部署架构与约束
@@ -102,7 +126,7 @@ FastAPI + OpenCV 经典 CV 检测器
    默认为 `false`，以便现有 App 不改代码即可使用。验证期间请用安全组限制来源 IP；接好 App
    登录后把该变量设为 `true`，并在 Nginx/应用层补登录限流。
 3. **上传文件和片段不会自动删除**。每次分析都会在 `BASKETBALL_UPLOAD_DIR` 留一份原视频，
-   片段写到 `<upload_dir>/clips`；长时间运行前请按 [5.7 节](#57-清理上传文件与片段可选) 配置定期清理。
+   片段写到 `<upload_dir>/clips`；长时间运行前请按 [5.7 节](#57-清理上传文件与片段可选但建议) 配置定期清理。
 
 ---
 
@@ -158,7 +182,7 @@ SSH 登录服务器后执行：
 ```bash
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y python3 python3-venv python3-pip nginx git curl jq ffmpeg
+sudo apt install -y python3 python3-venv python3-pip nginx git curl jq ffmpeg sqlite3 openssl
 python3 --version   # 需要 >= 3.11
 ```
 
@@ -167,6 +191,8 @@ python3 --version   # 需要 >= 3.11
 - `python3-venv`：创建虚拟环境；
 - `nginx`：反向代理；
 - `jq`：本文的 JSON 查看/解析命令会用到；
+- `sqlite3`：5.8 备份/恢复 SQLite 数据库时使用（运行时依赖已在 Python 包内，不需要它）；
+- `openssl`：生成短信验证码 pepper 等随机密钥；
 - `ffmpeg`：**0.5.0 起片段功能的必需依赖**；服务端启动时探测，缺失时
   `health.clips=false`、识别仍可完成但不会生成片段。HEVC/H.265 源视频也由它统一转 H.264。
   安装后可用 `ffmpeg -version` 确认。
@@ -213,6 +239,39 @@ sudo -u basketball .venv/bin/pip install -r requirements.txt
 
 ### 5.1 环境变量
 
+#### 5.1.1 先选部署模式
+
+| 模式 | 用途 | 关键变量 |
+| --- | --- | --- |
+| 验收模式 | 先把服务跑通，不接真实短信 | `BASKETBALL_ENV=development`、`BASKETBALL_SMS_PROVIDER=dev`、`BASKETBALL_REQUIRE_AUTH=false`；验证码只写服务端日志，不产生短信费用 |
+| 生产模式 | 给真实用户使用 | `BASKETBALL_ENV=production`、`BASKETBALL_SMS_PROVIDER=aliyun`、阿里云短信 4 项 + `BASKETBALL_SMS_CODE_PEPPER`；建议 `BASKETBALL_REQUIRE_AUTH=true` |
+
+`BASKETBALL_ENV=production` 时，`server/app/config.py` 会在启动阶段强制检查短信配置：
+仍用 `dev` provider、或缺少 AccessKey/签名/模板/pepper，都会直接报错退出。**不要在还没准备好
+短信时把 `BASKETBALL_ENV` 改成 `production`**；先用验收模式跑通，再按 5.1.2 切生产。
+验收模式下验证码不会发短信，用 `sudo journalctl -u basketball | grep dev-sms` 查看。
+
+#### 5.1.2 阿里云短信准备（生产模式）
+
+1. 在阿里云控制台开通[短信服务](https://dysms.console.aliyun.com/)，申请**签名**和**模板**并等待审核通过；
+   模板变量通常为 `${code}`，以控制台实际审核结果为准。
+2. 创建一个只用于发短信的 RAM 用户，授予发送短信所需的最小权限（至少 `dysms:SendSms`；
+   图省事可用 `AliyunDysmsFullAccess`，但权限更大），为该用户创建 AccessKey。
+3. 记下签名名称、模板 CODE 和地域（默认 `cn-hangzhou`）。
+4. 生成验证码 pepper（**不要**把 AccessKey、pepper 提交到仓库或发到聊天里）：
+
+```bash
+openssl rand -hex 32
+```
+
+5. 把 AccessKey、签名、模板 CODE、pepper 填进 5.1.3 的 `/etc/basketball.env`，文件保持
+   `root:basketball 640`。
+
+#### 5.1.3 写入配置文件
+
+下面的示例是**生产模式**；只做验收时，把 `BASKETBALL_ENV` 和 `BASKETBALL_SMS_PROVIDER`
+改成 `development` / `dev`，并删掉或留空短信相关项与 pepper（`REQUIRE_AUTH` 也可先设 `false`）。
+
 ```bash
 sudo tee /etc/basketball.env >/dev/null <<'EOF'
 BASKETBALL_UPLOAD_DIR=/var/lib/basketball/uploads
@@ -232,8 +291,7 @@ BASKETBALL_SMS_ACCESS_KEY_SECRET=替换为RAM_ACCESS_KEY_SECRET
 BASKETBALL_SMS_SIGN_NAME=替换为已审核签名
 BASKETBALL_SMS_TEMPLATE_CODE=替换为已审核模板CODE
 BASKETBALL_SMS_CODE_PEPPER=替换为32字节以上随机字符串
-# 本地联调可改回 dev：验证码只写服务端日志，不会发短信
-# BASKETBALL_SMS_PROVIDER=dev
+BASKETBALL_SMS_REGION=cn-hangzhou
 # 进球片段：默认只剪命中球、前后各 5 秒
 BASKETBALL_CLIP_ENABLED=true
 BASKETBALL_CLIP_PRE_SECONDS=5
@@ -249,7 +307,11 @@ sudo chown root:basketball /etc/basketball.env
 sudo chmod 640 /etc/basketball.env
 ```
 
-变量含义见 [附录 B](#附录-b环境变量速查)。注意：配置在进程启动时读取，改完需要重启服务。
+变量含义见 [附录 B](#附录-b环境变量速查)。注意：配置在进程启动时读取，改完需要
+`sudo systemctl restart basketball`；启动失败先看 `journalctl -u basketball -n 100 --no-pager`。
+
+打开 `BASKETBALL_REQUIRE_AUTH=true` 前确认 App 是 0.6.0 及以上：旧 App 没有登录态，
+上传会返回 401，需要先升级 App，或临时保持 `false`。
 
 ### 5.2 systemd 服务
 
@@ -295,6 +357,8 @@ curl -s http://127.0.0.1:8000/api/v1/health
 - `version` 低于 `0.6.0` 或 `detector` 是 `stub`：说明部署的不是最新 `main`，先 `git pull` 再重启，见第 10 节。
 - `clips=false`：ffmpeg 不可用或已关闭片段功能；执行 `ffmpeg -version` 检查，
   或确认 `BASKETBALL_FFMPEG_PATH` 指向可执行文件。识别功能不受影响。
+- 首次启动会在 `BASKETBALL_DB_PATH` 里创建 SQLite 表；目录必须存在且对 `basketball`
+  用户可写（[4.1 节](#41-创建运行用户和目录)已创建 `/var/lib/basketball/data`）。
 - 如果启动失败，看日志：`sudo journalctl -u basketball -n 100 --no-pager`。
 
 ### 5.3 Nginx 反向代理
@@ -348,7 +412,14 @@ sudo systemctl reload nginx
 `listen 8080 default_server;`，删掉 IPv6 那行或同步改 8080，并在安全组开放 8080。
 手机端地址相应写成 `http://<公网IP>:8080`。
 
-### 5.4 HTTPS（可选，但有域名时建议）
+### 5.4 HTTPS（有域名时强烈建议；release 包必须）
+
+**先明确一点**：debug 包允许 `http://`，release 包关闭了明文 HTTP，只能连 HTTPS
+（见 README 的 release 构建说明）。所以：
+
+- 只用 debug 包验收：可以先走 `http://<公网IP>`，跳过本节；
+- 要发 release 包或长期使用：必须有域名 + HTTPS（中国大陆地域的域名通常还需 ICP 备案），
+  不建议只给 IP 配证书。
 
 需要一个已解析到 ECS 公网 IP 的域名（A 记录）。然后：
 
@@ -357,8 +428,12 @@ sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d basketball.example.com
 ```
 
-按提示完成即可。之后 App 里填 `https://basketball.example.com`。
-指向纯 IP 时不建议折腾证书，HTTP 也能用（App 已允许明文 HTTP）。
+按提示完成即可。certbot 会自动改写 Nginx 配置并安装续期定时器，可用
+`systemctl status certbot.timer` 确认。之后 App 的开发者设置里填
+`https://basketball.example.com`。
+
+如果只是临时验证、用 debug 包，`http://<公网IP>` 也能用；但不要把这个地址发给使用
+release 包的用户。
 
 ### 5.5 最快验证：跳过 Nginx 直接暴露 uvicorn（可选）
 
@@ -402,6 +477,129 @@ sudo chmod +x /etc/cron.daily/basketball-cleanup
 
 如果片段目录用了别的路径，同步修改 `find` 的路径。片段文件被清理后，App 会显示
 「片段已失效」，识别结果仍可正常查看。
+
+### 5.8 数据备份与恢复
+
+需要备份的只有三样：SQLite 数据库（账号、任务、验证码）、上传/片段目录（可选，体积大且
+可以重新生成）、`/etc/basketball.env`（含密钥，单独加密保管）。
+
+数据库使用 WAL 模式，**不要直接 `cp` 正在写入的 `.db` 文件**；用 `sqlite3 .backup` 做一致性快照。
+先安装 sqlite3（[第 3 节](#3-安装系统依赖)已包含）。
+
+```bash
+sudo mkdir -p /var/backups/basketball
+sudo chown basketball:basketball /var/backups/basketball
+
+sudo tee /etc/cron.daily/basketball-backup >/dev/null <<'EOF'
+#!/bin/sh
+set -e
+umask 077
+STAMP=$(date +%F)
+sqlite3 /var/lib/basketball/data/basketball.db ".backup '/var/backups/basketball/basketball-$STAMP.db'"
+# 上传和片段体积大，按需备份；不需要就保持注释
+# tar -czf "/var/backups/basketball/media-$STAMP.tar.gz" -C /var/lib/basketball uploads clips
+find /var/backups/basketball -type f -mtime +14 -delete
+EOF
+sudo chmod 700 /etc/cron.daily/basketball-backup
+```
+
+- 数据库通常只有几 MB，保留 14 天；按磁盘容量调整保留天数；
+- 生产建议把备份同步到阿里云 OSS（例如 `ossutil cp -r /var/backups/basketball oss://<bucket>/basketball/`）
+  或另一台机器，避免 ECS 整机故障时备份一起丢；
+- 备份含用户手机号等个人信息，权限保持 600/700，不要放在公开目录。
+
+恢复时先停服务，再覆盖数据库：
+
+```bash
+sudo systemctl stop basketball
+sudo rm -f /var/lib/basketball/data/basketball.db-wal /var/lib/basketball/data/basketball.db-shm
+sudo cp /var/backups/basketball/basketball-<日期>.db /var/lib/basketball/data/basketball.db
+sudo chown basketball:basketball /var/lib/basketball/data/basketball.db
+# 如也备份了媒体：sudo tar -xzf /var/backups/basketball/media-<日期>.tar.gz -C /var/lib/basketball
+sudo systemctl start basketball
+curl -s http://127.0.0.1:8000/api/v1/health
+```
+
+恢复旧库会丢失备份点之后的新账号和任务，恢复前先确认要回到的时间点。
+
+### 5.9 升级与回滚
+
+升级前先做一次 [5.8 节](#58-数据备份与恢复)的数据库备份。服务是单进程，升级期间有短暂停机；
+停机时仍在 `queued`/`processing` 的任务会变成 `failed`，已完成任务和账号不受影响。
+
+```bash
+# 先抓取新代码，尽量减少停机时间；服务器工作区应保持干净（git status 无改动）
+sudo -u basketball git -C /opt/basketball/app fetch --all --tags
+sudo -u basketball git -C /opt/basketball/app log --oneline -3 origin/main
+
+sudo systemctl stop basketball
+sudo -u basketball git -C /opt/basketball/app checkout <要部署的 commit 或 tag>
+sudo -u basketball /opt/basketball/app/server/.venv/bin/pip install \
+  -r /opt/basketball/app/server/requirements.txt
+sudo systemctl start basketball
+sleep 2
+curl -s http://127.0.0.1:8000/api/v1/health
+```
+
+- 数据库迁移在服务启动时自动执行（`server/app/services/db.py` 用 `CREATE TABLE IF NOT EXISTS`
+  和补列），不需要手动跑迁移脚本；
+- 升级后确认 `version`、`detector`、`clips` 三项，再按[第 9 节](#9-端到端验收清单)抽查；
+- **回滚**：`git checkout <上一个 commit>`、重装依赖、重启即可；如果新版本改过表结构且旧代码
+  不兼容，先停服务、用 5.8 的备份恢复数据库，再启动旧代码；
+- 不要用 `git pull` 直接覆盖服务器上的本地改动；如果服务器访问 GitHub 不稳定，可以在本地打
+  tar 包上传后解压覆盖，仍要保持 `.env` 和数据库不在仓库里。
+
+### 5.10 日志与监控
+
+```bash
+sudo journalctl -u basketball -n 100 --no-pager      # 最近日志
+sudo journalctl -u basketball -f                     # 实时日志
+sudo journalctl -u basketball --since '1 hour ago'   # 按时间
+sudo journalctl --disk-usage                         # journal 占用
+sudo tail -n 50 /var/log/nginx/error.log
+sudo tail -n 50 /var/log/nginx/access.log
+```
+
+- journald 和 Nginx 日志默认会轮转；磁盘紧张时可以给 journald 设上限：
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/basketball.conf >/dev/null <<'EOF'
+[Journal]
+SystemMaxUse=500M
+EOF
+sudo systemctl restart systemd-journald
+```
+
+- 建议加一个最小健康检查（每 5 分钟失败时写系统日志）；如果使用阿里云云监控，也可以直接配
+  「站点监控」探测 `/api/v1/health`：
+
+```bash
+sudo tee /etc/cron.d/basketball-health >/dev/null <<'EOF'
+*/5 * * * * root curl -fsS --max-time 10 http://127.0.0.1:8000/api/v1/health >/dev/null || logger -t basketball-health "health check failed"
+EOF
+```
+
+- 关注磁盘：`df -h`、`du -sh /var/lib/basketball/*`；上传和片段不自动删除，5.7 的清理必须配置，
+  否则磁盘会持续增长；
+- 关注 CPU/内存：2 vCPU 上单个分析任务会吃满一两个核，多人同时上传会排队变慢；需要扩容时先换
+  任务队列，**不要只加 `--workers`**（见[第 1 节](#1-部署架构与约束)约束）；
+- 短信费用：在阿里云短信控制台设置日限额和费用告警，应用层限流不是费用保险。
+
+### 5.11 安全加固
+
+- 安全组只放行 22（限你的 IP）、80、443；**不要对公网开放 8000**，uvicorn 只监听 `127.0.0.1`；
+- SSH 用密钥登录：`/etc/ssh/sshd_config` 设 `PasswordAuthentication no`、
+  `PermitRootLogin prohibit-password`，改完先 `sudo sshd -t` 校验、保持当前会话不要断开，
+  再 `sudo systemctl reload ssh`；云控制台 VNC 作为兜底；
+- 启用了 `ufw` 时按 [5.6 节](#56-防火墙可选)放行，阿里云安全组和 ufw 两层都要配；
+- `/etc/basketball.env` 保持 `root:basketball 640`，不要把 AccessKey/pepper 写进仓库、聊天或工单；
+- 阿里云 RAM 用户只授短信发送所需权限，定期轮换 AccessKey，不要使用主账号 AccessKey；
+- 生产必须 `BASKETBALL_ENV=production`、`BASKETBALL_REQUIRE_AUTH=true`，要发 release 包时配
+  HTTPS（[5.4 节](#54-https有域名时强烈建议release-包必须)）；
+- 定期 `sudo apt update && sudo apt upgrade`，或开启 `unattended-upgrades`；升级内核后重启服务；
+- Nginx 的 `limit_req` 和应用层限流都要保留；发现验证码轰炸时先在安全组/Nginx 封 IP，
+  再考虑接人机验证。
 
 ---
 
@@ -736,6 +934,11 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 - [ ] App 从录制/相册到结果页全流程走通，片段可播放并保存到相册
 - [ ] 公网只开放必要端口；若用 Nginx，8000 未对公网开放
 - [ ] `BASKETBALL_DB_PATH` 指向持久化目录；上传目录和片段目录已配置定期清理或已记录待办
+- [ ] 生产模式：`BASKETBALL_ENV=production`、`BASKETBALL_REQUIRE_AUTH=true`，真实手机能收到验证码
+- [ ] 备份任务已成功跑过一次，`/var/backups/basketball` 有当天数据库；恢复步骤演练过
+- [ ] `journalctl -u basketball` 没有持续报错；健康检查 cron 或云监控已配置
+- [ ] 运维安全：安全组 22 限来源 IP、`/etc/basketball.env` 为 `640`、RAM AccessKey 非主账号
+- [ ] 发给 release 包用户的地址是 HTTPS；debug 包才使用 HTTP 地址
 
 ---
 
@@ -758,7 +961,15 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 | 任务 `failed`：无法打开视频 | 编码不受支持/文件损坏 | 用 `ffmpeg` 转 H.264 MP4：`ffmpeg -i in.mov -c:v libx264 -pix_fmt yuv420p out.mp4` |
 | 服务重启后未完成任务变成 `failed` | 分析是进程内任务，重启不会续跑 | 属预期；重新上传。已完成任务不受影响 |
 | 登录返回 `401` | 密码错误，或 token 过期/已退出 | 重新登录；检查 `BASKETBALL_TOKEN_TTL_DAYS` |
-| 打开 `BASKETBALL_REQUIRE_AUTH=true` 后 App 上传 401 | App 还没接登录 | 先保持 `false`，或换用带 `Authorization` 的客户端 |
+| 打开 `BASKETBALL_REQUIRE_AUTH=true` 后 App 上传 401 | App 还没接登录（低于 0.6.0） | 升级 App；或临时保持 `false`，或换用带 `Authorization` 的客户端 |
+| 服务启动失败：`生产环境必须使用真实的短信服务` | `BASKETBALL_ENV=production` 但仍是 `dev` 短信 | 按 5.1.1 改成验收模式，或配好阿里云短信后再切生产 |
+| 服务启动失败：`阿里云短信缺少配置: ...` | 生产模式缺少 AccessKey/签名/模板/pepper | 补齐 5.1.3 对应变量；注意变量名不要拼错 |
+| 服务启动失败：某个 `BASKETBALL_*` 需要 0-1/范围/整数 | 环境变量超出允许范围 | 按附录 B 的默认值和范围检查 `/etc/basketball.env` |
+| 发验证码返回 `503` 或日志有 `isv.BUSINESS_LIMIT_CONTROL` | 短信 AccessKey/权限/签名/模板/余额/频率问题 | 看 `journalctl -u basketball -n 100`；到短信控制台核对签名模板、RAM 权限和发送量 |
+| 发验证码返回 `429` | 触发手机号/IP/全站限流 | 等待重试；调整 `BASKETBALL_SMS_*_LIMIT` 前先确认不是被刷 |
+| release 包提示明文 HTTP 被禁止/连不上 | release 构建只允许 HTTPS | 按 5.4 配域名和证书，App 地址改成 `https://` |
+| 日志出现 `database is locked` | 多个进程/worker 同时写同一个 SQLite | 保持 `--workers 1`，不要同时启动手动 uvicorn 和 systemd 服务 |
+| 启动报 `Address already in use` | 8000 端口被旧进程占用 | 用 `sudo ss -lntp` 找到占用 8000 的进程并停掉，再重启服务 |
 | CPU 打满、分析很慢 | 多人同时上传、抽帧率高、视频大 | 单任务串行使用；降低 `BASKETBALL_SAMPLE_FPS`；控制视频时长/分辨率 |
 | 上传文件/片段占满磁盘 | 上传或片段目录未清理 | 配置 5.7 的定时清理，或手动删 `uploads`/`clips` 下旧文件 |
 
@@ -809,8 +1020,21 @@ git checkout <包含该提交的 commit>
 | `BASKETBALL_MAX_UPLOAD_BYTES` | `209715200`（200 MB） | 单文件上传上限 |
 | `BASKETBALL_UPLOAD_DIR` | 系统临时目录 | 上传视频保存目录；生产建议 `/var/lib/basketball/uploads` |
 | `BASKETBALL_DB_PATH` | `<临时目录>/basketball-data/basketball.db` | SQLite 数据库；生产建议 `/var/lib/basketball/data/basketball.db` |
-| `BASKETBALL_REQUIRE_AUTH` | `false` | `true` 时上传/查询/列表都要求登录；App 接入登录前保持 `false` |
+| `BASKETBALL_REQUIRE_AUTH` | `false` | `true` 时上传/查询/列表都要求登录；生产建议 `true`，旧 App（<0.6.0）先保持 `false` |
 | `BASKETBALL_TOKEN_TTL_DAYS` | `30` | 登录 token 有效天数；`0` 表示不过期 |
+| `BASKETBALL_ENV` | `development` | `production` 时禁止 `dev` 短信，并强制检查阿里云短信配置 |
+| `BASKETBALL_SMS_PROVIDER` | `dev` | `dev`=验证码只写日志；`aliyun`=真实短信 |
+| `BASKETBALL_SMS_ACCESS_KEY_ID` / `..._SECRET` | 空 | 阿里云 RAM AccessKey；生产必填 |
+| `BASKETBALL_SMS_SIGN_NAME` / `..._TEMPLATE_CODE` | 空 | 已审核的短信签名和模板 CODE；生产必填 |
+| `BASKETBALL_SMS_REGION` | `cn-hangzhou` | 短信服务地域 |
+| `BASKETBALL_SMS_CODE_PEPPER` | 空 | 验证码 HMAC 密钥；生产必填，用 `openssl rand -hex 32` 生成 |
+| `BASKETBALL_SMS_CODE_TTL_SECONDS` | `300` | 验证码有效期（60–1800 秒） |
+| `BASKETBALL_SMS_RESEND_SECONDS` | `60` | 同一手机号重发间隔（30–600 秒） |
+| `BASKETBALL_SMS_MAX_ATTEMPTS` | `5` | 单个验证码最大尝试次数（1–10） |
+| `BASKETBALL_SMS_PHONE_HOURLY_LIMIT` / `..._DAILY_LIMIT` | `5` / `10` | 单手机号每小时/每天发码上限 |
+| `BASKETBALL_SMS_IP_HOURLY_LIMIT` | `30` | 单 IP 每小时发码上限 |
+| `BASKETBALL_SMS_DAILY_LIMIT` | `1000` | 全站每天发码上限 |
+| `BASKETBALL_LOGIN_MAX_FAILURES` / `..._WINDOW_SECONDS` | `10` / `900` | 登录失败次数上限与统计窗口（秒） |
 | `BASKETBALL_CLIP_ENABLED` | `true` | 关闭后不生成片段，识别任务照常完成 |
 | `BASKETBALL_CLIP_PRE_SECONDS` / `BASKETBALL_CLIP_POST_SECONDS` | `5` / `5` | 进球前后各截取秒数（0–30） |
 | `BASKETBALL_CLIP_DIR` | `<upload_dir>/clips` | 片段保存目录；生产建议 `/var/lib/basketball/clips` |
@@ -830,3 +1054,25 @@ git checkout <包含该提交的 commit>
 片段细节见 [shot-clips.md](shot-clips.md)。
 systemd/Nginx/阿里云安全组部分按 Ubuntu 24.04 编写，首次部署请按第 9 节逐项验收；
 如果实际环境有差异，以 `journalctl`、`nginx -t` 和健康检查结果为准。
+
+5.8–5.11 的备份、升级、监控和安全加固是通用运维步骤，未在真实 ECS 上逐条执行；首次执行前
+建议先在测试机验证，尤其是 SSH 加固时保持当前会话不要断开，避免把自己锁在服务器外。
+
+## 附录 D：部署记录（交付时填写）
+
+> 只记录部署信息，**不要**在这里写 AccessKey、数据库密码、验证码 pepper 等密钥。
+
+| 项目 | 值 |
+| --- | --- |
+| 部署日期 / 负责人 |  |
+| 阿里云地域 / 实例 ID |  |
+| 公网 IP / 域名 |  |
+| 部署 commit / tag |  |
+| 部署模式（验收 / 生产） |  |
+| `BASKETBALL_DB_PATH` |  |
+| 上传 / 片段目录 |  |
+| 备份目录 / 保留天数 |  |
+| 短信签名 / 模板 CODE |  |
+| 健康检查地址 |  |
+
+部署完成后把本表填好，和 `/etc/basketball.env` 分开保管；密钥只放在服务器配置和密码管理器中。
