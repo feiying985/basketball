@@ -13,7 +13,8 @@
 > 算法与限制见 [docs/shot-detection.md](docs/shot-detection.md)，
 > 进球片段设计见 [docs/shot-clips.md](docs/shot-clips.md)，
 > 持久化与账号设计见 [docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)，
-> 评估与标注见 [server/tools/README.md](server/tools/README.md)。
+> 评估与标注见 [server/tools/README.md](server/tools/README.md)，
+> 个人开发者推广运营策略见 [docs/promotion-operations-strategy.md](docs/promotion-operations-strategy.md)。
 
 ## 目录结构
 
@@ -36,7 +37,8 @@
 │   ├── shot-detection.md     # 算法与限制说明
 │   ├── shot-clips.md         # 进球片段生成与 App 播放
 │   ├── server-persistence-accounts.md  # 任务持久化与账号体系
-│   └── deployment-verification.md  # 阿里云部署、运维与验证指引
+│   ├── deployment-verification.md  # 阿里云部署、运维与验证指引
+│   └── promotion-operations-strategy.md  # 个人开发者推广运营策略
 └── .github/workflows/        # 服务端测试 + 安卓构建 CI
 ```
 
