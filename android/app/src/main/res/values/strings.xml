@@ -109,6 +109,14 @@
     <string name="review_hoop_clear">恢复自动识别</string>
     <string name="review_hoop_hint">自动识别找错篮筐时，可以手动框选篮筐位置，识别会更准。</string>
     <string name="review_hoop_frame_error">无法读取视频画面，请换一段视频试试</string>
+    <string name="review_mode_label">识别方式</string>
+    <string name="review_mode_cloud_title">云端识别</string>
+    <string name="review_mode_cloud_desc">上传视频，由服务端识别</string>
+    <string name="review_mode_local_title">本地识别</string>
+    <string name="review_mode_local_desc">不上传，手机直接处理</string>
+    <string name="review_mode_cloud_hint">视频会上传到服务端；识别完成后可生成进球片段。</string>
+    <string name="review_mode_local_hint">视频不会上传，识别在手机本地完成；本地模式不生成进球片段。</string>
+    <string name="review_start_local">开始本地识别</string>
 
     <!-- 手动圈定篮筐 -->
     <string name="hoop_roi_title">圈定篮筐</string>
@@ -130,6 +138,10 @@
     <string name="analysis_hint_network">视频越长，分析时间越久，请保持网络畅通。</string>
     <string name="analysis_elapsed">已等待 %1$s</string>
     <string name="analysis_network_retry">网络中断，正在重试…</string>
+    <string name="analysis_local_processing">正在本地识别…</string>
+    <string name="analysis_local_progress">本地识别 %1$d%%</string>
+    <string name="analysis_hint_local">视频只在手机本地处理，不会上传。</string>
+    <string name="analysis_hint_local_wait">视频较长时本地处理会更久，可以先离开，稍后到记录里查看。</string>
     <string name="analysis_timeout_title">分析时间超出预期</string>
     <string name="analysis_timeout_message">可以继续等待，或重新上传这段视频再分析一次。</string>
     <string name="analysis_cancel_upload">取消上传</string>
@@ -160,6 +172,7 @@
     <string name="result_shot_time">%1$s</string>
     <string name="result_video_cleaned">视频已清理</string>
     <string name="result_expired_snapshot">服务端任务已失效，以下为本地结果快照</string>
+    <string name="result_local_banner">本地识别：视频没有上传，处理都在手机上完成。</string>
     <string name="result_expired_no_snapshot">这次分析结果已不可用</string>
     <string name="result_failed">分析失败</string>
     <string name="result_failed_detail">分析失败：%1$s</string>

@@ -3,6 +3,7 @@ package com.feiying.basketball.data
 import android.content.Context
 import androidx.room.Room
 import com.feiying.basketball.data.local.AppDatabase
+import com.feiying.basketball.data.ondevice.OnDeviceShotAnalyzer
 import com.feiying.basketball.domain.SelectedVideo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +40,7 @@ class AppContainer(context: Context) {
     ).addMigrations(
         AppDatabase.MIGRATION_1_2,
         AppDatabase.MIGRATION_2_3,
+        AppDatabase.MIGRATION_3_4,
     ).fallbackToDestructiveMigration().build()
 
     val settingsStore = SettingsStore(appContext)
@@ -67,6 +69,7 @@ class AppContainer(context: Context) {
         dao = database.analysisRecordDao(),
         api = analysisApi,
         settingsStore = settingsStore,
+        onDeviceAnalyzer = OnDeviceShotAnalyzer(),
         json = json,
         scope = scope,
     )

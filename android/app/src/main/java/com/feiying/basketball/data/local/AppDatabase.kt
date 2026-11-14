@@ -24,6 +24,7 @@ data class AnalysisRecordEntity(
     val durationMs: Long?,
     val status: String,
     val hoopRoi: String? = null,
+    val mode: String = "CLOUD",
     val resultJson: String?,
     val errorCode: String?,
     val errorDetail: String?,
@@ -125,7 +126,7 @@ interface AnalysisRecordDao {
 
 @Database(
     entities = [AnalysisRecordEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -148,6 +149,18 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL(
                     "CREATE INDEX IF NOT EXISTS idx_analysis_records_owner " +
                         "ON analysis_records(ownerUserId, createdAt DESC)",
+                )
+            }
+        }
+
+        /**
+         * Records whether a video was analyzed in the cloud or on the phone.
+         * Existing rows were all cloud analyses, so they default to CLOUD.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE analysis_records ADD COLUMN mode TEXT NOT NULL DEFAULT 'CLOUD'",
                 )
             }
         }
