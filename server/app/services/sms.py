@@ -4,6 +4,10 @@ Only an HMAC digest of each code is stored.  Codes are single-use, expire
 quickly and are protected by per-phone, per-IP and global rate limits.  The
 default ``dev`` provider logs the code instead of sending it; production uses
 Aliyun SMS with reviewed signature/template values.
+
+While SMS delivery is not wired up, development deployments also accept a
+fixed debug code (``666666`` by default) for an outstanding code request.  The
+fixed code is rejected in production and with a real SMS provider.
 """
 
 from __future__ import annotations
@@ -125,6 +129,12 @@ class SmsCodeService:
         self._config = config or settings
         self.sender = sender or build_sender(self._config)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        debug_code = self._config.effective_sms_debug_code
+        if debug_code is not None:
+            logger.warning(
+                "[sms-debug] 固定调试验证码已启用: %s（仅限开发/调试，生产环境禁用）",
+                debug_code,
+            )
 
     def issue(self, phone: str, purpose: str, request_ip: str | None) -> tuple[int, int]:
         phone = normalize_phone(phone)
@@ -198,20 +208,33 @@ class SmsCodeService:
                 connection.commit()
                 raise InvalidVerificationCode()
             if not hmac.compare_digest(row["code_hash"], self._hash(phone, purpose, code)):
-                attempts = row["attempts"] + 1
-                connection.execute(
-                    "UPDATE sms_codes SET attempts = ? WHERE id = ?",
-                    (attempts, row["id"]),
-                )
-                if attempts >= row["max_attempts"]:
-                    connection.execute(
-                        "UPDATE sms_codes SET consumed_at = ? WHERE id = ?",
-                        (now.isoformat(), row["id"]),
+                if self._is_debug_code(code):
+                    logger.warning(
+                        "[sms-debug] 使用固定调试验证码 phone=%s purpose=%s",
+                        phone,
+                        purpose,
                     )
-                connection.commit()
-                raise InvalidVerificationCode()
+                else:
+                    attempts = row["attempts"] + 1
+                    connection.execute(
+                        "UPDATE sms_codes SET attempts = ? WHERE id = ?",
+                        (attempts, row["id"]),
+                    )
+                    if attempts >= row["max_attempts"]:
+                        connection.execute(
+                            "UPDATE sms_codes SET consumed_at = ? WHERE id = ?",
+                            (now.isoformat(), row["id"]),
+                        )
+                    connection.commit()
+                    raise InvalidVerificationCode()
             connection.commit()
         return VerifiedCode(id=row["id"], phone=phone, purpose=purpose)
+
+    def _is_debug_code(self, code: str) -> bool:
+        """Whether ``code`` is the configured fixed code for this deployment."""
+
+        debug_code = self._config.effective_sms_debug_code
+        return debug_code is not None and hmac.compare_digest(debug_code, code)
 
     def consume(self, code: VerifiedCode) -> None:
         now = self._clock()

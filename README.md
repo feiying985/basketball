@@ -184,6 +184,7 @@ GET  /api/v1/analyses        →  当前账号的历史任务
 - 密码用 scrypt 加盐哈希，token 只在数据库保存 SHA-256 摘要，默认 30 天过期；
 - Android App 登录后才可进入业务页面，token 使用 Android Keystore 加密存储；
 - 开发/测试默认使用 `BASKETBALL_SMS_PROVIDER=dev`（验证码只写服务端日志），生产切换阿里云短信；
+- 调试阶段在开发/验收模式可直接使用固定验证码 `666666`（仍需先点一次「获取验证码」，验证码仍受有效期、次数和限流约束）；生产模式和真实短信下该固定码自动禁用；
 - 生产环境应设置 `BASKETBALL_REQUIRE_AUTH=true`，服务端也强制分析接口登录。
 
 完整接口、数据表、重启语义与限制见
@@ -213,6 +214,7 @@ GET  /api/v1/analyses        →  当前账号的历史任务
 | `BASKETBALL_TOKEN_TTL_DAYS` | `30` | 登录 token 有效天数；`0` 表示不过期 |
 | `BASKETBALL_ENV` | `development` | `production` 时禁止使用 dev 短信实现 |
 | `BASKETBALL_SMS_PROVIDER` | `dev` | `dev`（日志输出验证码）或 `aliyun`（真实短信） |
+| `BASKETBALL_SMS_DEBUG_CODE` | 空（开发默认 `666666`） | 调试用固定验证码；仅开发/验收模式生效，生产禁用；设为 `off` 关闭 |
 | `BASKETBALL_SMS_ACCESS_KEY_ID` / `..._SECRET` | 空 | 阿里云 RAM AccessKey；生产必填 |
 | `BASKETBALL_SMS_SIGN_NAME` / `..._TEMPLATE_CODE` | 空 | 已审核的短信签名和模板 CODE |
 | `BASKETBALL_SMS_CODE_PEPPER` | 空 | 验证码 HMAC 密钥；生产必填 |
