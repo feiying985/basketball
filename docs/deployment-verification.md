@@ -2,7 +2,7 @@
 
 > - **适用代码**：`server` 0.6.0（经典 CV 检测器 + SQLite 任务持久化 + 手机号账号/短信验证码 +
 >   进球片段）；安卓端为支持登录门禁的 App。
-> - **更新日期**：2026-11-09
+> - **更新日期**：2026-11-14
 > - **目标环境**：阿里云 ECS（Ubuntu 24.04 LTS，2 vCPU / 2 GB 起）
 > - **文档定位**：前半部分（第 1–5 节）是阿里云 ECS 部署手册，后半部分（第 6–9 节）验证接口、
 >   识别效果和 App 全流程；运维相关的备份、升级、监控、安全加固在 5.8–5.11。只做部署时按
@@ -83,8 +83,9 @@
    （[2.1](#21-实例与镜像)、[2.3](#23-安全组)）。
 2. **装系统依赖**：`python3`、`python3-venv`、`nginx`、`git`、`curl`、`jq`、`ffmpeg`、`sqlite3`
    （[第 3 节](#3-安装系统依赖)）。
-3. **放代码、装 Python 依赖**：建运行用户和持久化目录，克隆仓库，创建虚拟环境
-   （[第 4 节](#4-获取代码并安装依赖)）。
+3. **放代码、装 Python 依赖**：建运行用户和持久化目录，克隆仓库，创建虚拟环境；国内 ECS
+   先把 pip 指向阿里云镜像，装依赖会快很多（[第 4 节](#4-获取代码并安装依赖)，
+   镜像配置见 [4.4](#44-加速依赖安装)）。
 4. **选部署模式**（不要跳过）：
    - 验收模式：`BASKETBALL_ENV=development` + `BASKETBALL_SMS_PROVIDER=dev` +
      `BASKETBALL_REQUIRE_AUTH=false`，验证码只写日志，最快跑通；
@@ -221,17 +222,110 @@ ls server/app/services/classical_shot_detection.py   # 经典 CV 检测器
 ls server/app/services/db.py                         # 0.3.0+ SQLite 持久化
 ```
 
+GitHub 在中国大陆访问可能很慢；只想先跑起来可以加 `--depth 1` 只取最新代码，仍慢时见
+[4.4.4](#444-其他能省时间的地方)。
+
 ### 4.3 创建虚拟环境并安装依赖
 
 ```bash
 cd /opt/basketball/app/server
 sudo -u basketball python3 -m venv .venv
-sudo -u basketball .venv/bin/pip install --upgrade pip
-sudo -u basketball .venv/bin/pip install -r requirements.txt
+sudo -u basketball .venv/bin/pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/
+sudo -u basketball .venv/bin/pip install -r requirements.txt \
+  -i https://mirrors.aliyun.com/pypi/simple/ --timeout 60 --retries 5
 .venv/bin/python -c "import cv2, numpy; print('cv2', cv2.__version__, 'numpy', numpy.__version__)"
 ```
 
+`-i` 只对这一次命令生效；想让升级、回滚重装都自动走镜像，按 [4.4](#44-加速依赖安装) 写一份 `pip.conf`。
+
 预期能打印出 `cv2 4.10.x` 和 `numpy 1.26.x`。
+
+### 4.4 加速依赖安装
+
+首次安装主要下载 `opencv-python-headless`（约 50 MB）、`numpy`（约 18 MB）和阿里云 SDK。
+ECS 在中国大陆跨境访问 `pypi.org` 经常只有几十 KB/s，装十几分钟并不奇怪。按场景选一种：
+
+| 场景 | 方案 | 效果 |
+| --- | --- | --- |
+| 正常部署（推荐） | 4.4.1 阿里云 PyPI 镜像 | 通常几十秒装完 |
+| 反复重建虚拟环境、频繁改依赖 | 4.4.2 uv（仍指定镜像） | 解析和并行下载更快 |
+| ECS 出网很慢、无外网或一次装多台 | 4.4.3 预下载 wheel 离线安装 | 只受上传/内网带宽限制 |
+
+三种方案装完都用 4.3 最后的 `import cv2, numpy` 命令确认。
+
+#### 4.4.1 阿里云 PyPI 镜像（首选）
+
+镜像地址是 `https://mirrors.aliyun.com/pypi/simple/`。写进虚拟环境的 `pip.conf` 后，之后所有
+`.venv/bin/pip` 命令都会自动使用镜像：
+
+```bash
+cd /opt/basketball/app/server
+sudo -u basketball tee .venv/pip.conf >/dev/null <<'EOF'
+[global]
+index-url = https://mirrors.aliyun.com/pypi/simple/
+timeout = 60
+retries = 5
+EOF
+sudo -u basketball .venv/bin/pip install -r requirements.txt
+```
+
+- 配置文件放在虚拟环境根目录即可，pip 会读取它；重建 `.venv` 后要重新写一次；
+- `requirements.txt` 里的版本都固定了（`==`），镜像同步 PyPI 的包，不需要改版本，也不需要
+  `--trusted-host`（镜像走 HTTPS）；
+- 只想临时加速时，不改配置，直接在 pip 命令后加 `-i https://mirrors.aliyun.com/pypi/simple/`；
+- 镜像也慢时先确认网络：`time curl -s -o /dev/null https://mirrors.aliyun.com/pypi/simple/`；
+  也可以临时换腾讯云（`https://mirrors.cloud.tencent.com/pypi/simple/`）或清华源
+  （`https://pypi.tuna.tsinghua.edu.cn/simple/`）对比。
+
+#### 4.4.2 用 uv 安装
+
+`uv` 是 Rust 实现的安装器，依赖解析和并行下载比 pip 快，适合反复重建环境。它只替换安装动作，
+虚拟环境和启动方式不变：
+
+```bash
+cd /opt/basketball/app/server
+sudo -u basketball .venv/bin/pip install uv -i https://mirrors.aliyun.com/pypi/simple/
+sudo -u basketball .venv/bin/uv pip install --python .venv/bin/python \
+  --default-index https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt
+```
+
+- uv **不读** `pip.conf`，镜像必须用 `--default-index` 指定（较旧的 uv 用 `-i`）；
+- 启动仍是 `.venv/bin/uvicorn ...`，systemd 配置不用改；
+- 重建环境仍按 4.3 用 `python3 -m venv`，装好 uv 后把安装命令换成 `uv pip install` 即可；
+  删掉旧目录后也可以用 `uv venv .venv --python 3.11 --seed` 建一个自带 pip 的环境。
+
+#### 4.4.3 预下载 wheel 离线安装（多台部署或出网受限）
+
+在一台网络好的 Linux x86_64 机器上把依赖下载成 wheel，再整体传到 ECS 离线安装：
+
+```bash
+# 1) 在仓库根目录下载 wheel（镜像可选）
+python3 -m pip download -r server/requirements.txt -d wheelhouse \
+  -i https://mirrors.aliyun.com/pypi/simple/
+
+# 2) 上传到 ECS；多台机器建议先传 OSS，再从内网下载
+scp -r wheelhouse root@<ECS_IP>:/opt/basketball/app/server/
+
+# 3) ECS 上离线安装
+cd /opt/basketball/app/server
+sudo -u basketball .venv/bin/pip install --no-index --find-links wheelhouse -r requirements.txt
+```
+
+- `pip download` 按**当前平台**取 wheel；`numpy`、`opencv` 的 wheel 不能跨操作系统，要在
+  Linux x86_64 上下载（macOS/Windows 只适合下纯 Python 包）；
+- 多台 ECS 分发 `wheelhouse` 比每台都跨境下载省时；以后新增依赖时再重新生成一次。
+
+#### 4.4.4 其他能省时间的地方
+
+- **系统依赖**：阿里云 ECS 的 Ubuntu 镜像通常已指向内网源 `mirrors.cloud.aliyuncs.com`；
+  如果 `apt update`/`apt install` 也慢，先检查 `/etc/apt/sources.list.d/ubuntu.sources`
+  是否被改成了境外官方源，改回内网镜像。
+- **git clone 慢**：GitHub 在中国大陆访问不稳定。可以 `git clone --depth 1` 只取最新代码
+  （见 4.2，升级时 `git pull` 仍可用），或在本地 clone 后 `scp -r` 上传，注意排除 `.venv`
+  和视频等大文件。
+- **失败重跑不要删 `.venv`**：pip 会把已下载的 wheel 缓存在用户目录，直接重跑会复用；
+  加 `--no-cache-dir` 反而会重新下载。
+- **不要用 `--no-deps` 或改版本号提速**：会破坏可复现性，之后升级和排障都更麻烦。
 
 ---
 
@@ -548,6 +642,7 @@ curl -s http://127.0.0.1:8000/api/v1/health
 - 升级后确认 `version`、`detector`、`clips` 三项，再按[第 9 节](#9-端到端验收清单)抽查；
 - **回滚**：`git checkout <上一个 commit>`、重装依赖、重启即可；如果新版本改过表结构且旧代码
   不兼容，先停服务、用 5.8 的备份恢复数据库，再启动旧代码；
+- 按 [4.4](#44-加速依赖安装) 配过镜像后，升级和回滚时的重装依赖会走镜像与本地缓存，通常很快；
 - 不要用 `git pull` 直接覆盖服务器上的本地改动；如果服务器访问 GitHub 不稳定，可以在本地打
   tar 包上传后解压覆盖，仍要保持 `.env` 和数据库不在仓库里。
 
@@ -974,6 +1069,7 @@ App 默认地址是 `http://10.0.2.2:8000`，只适用于模拟器访问宿主�
 | 启动报 `Address already in use` | 8000 端口被旧进程占用 | 用 `sudo ss -lntp` 找到占用 8000 的进程并停掉，再重启服务 |
 | CPU 打满、分析很慢 | 多人同时上传、抽帧率高、视频大 | 单任务串行使用；降低 `BASKETBALL_SAMPLE_FPS`；控制视频时长/分辨率 |
 | 上传文件/片段占满磁盘 | 上传或片段目录未清理 | 配置 5.7 的定时清理，或手动删 `uploads`/`clips` 下旧文件 |
+| 安装依赖很慢、`pip install` 反复超时 | 跨境访问 `pypi.org` 慢或网络抖动 | 按 [4.4](#44-加速依赖安装) 换阿里云 PyPI 镜像；失败后直接重跑会复用已下载的 wheel |
 
 ---
 
@@ -1057,6 +1153,10 @@ git checkout <包含该提交的 commit>
 片段细节见 [shot-clips.md](shot-clips.md)。
 systemd/Nginx/阿里云安全组部分按 Ubuntu 24.04 编写，首次部署请按第 9 节逐项验收；
 如果实际环境有差异，以 `journalctl`、`nginx -t` 和健康检查结果为准。
+
+4.3/4.4 的依赖安装命令用同一份 `server/requirements.txt` 验证过：从 `mirrors.aliyun.com` 能
+下载全部 wheel（含传递依赖），uv 也能完成解析；但未在真实 ECS 上计时，实际速度取决于地域和
+运营商，首次部署以实际下载耗时为准。
 
 5.8–5.11 的备份、升级、监控和安全加固是通用运维步骤，未在真实 ECS 上逐条执行；首次执行前
 建议先在测试机验证，尤其是 SSH 加固时保持当前会话不要断开，避免把自己锁在服务器外。
