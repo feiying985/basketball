@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.feiying.basketball.data.local.AnalysisRecordDao
 import com.feiying.basketball.data.local.AnalysisRecordEntity
 import com.feiying.basketball.domain.AnalysisError
+import com.feiying.basketball.domain.AnalysisMode
 import com.feiying.basketball.domain.AnalysisRecord
 import com.feiying.basketball.domain.AnalysisResult
 import com.feiying.basketball.domain.AnalysisStatus
@@ -51,9 +52,14 @@ data class ActiveAnalysis(
     val elapsedMs: Long = 0,
     val timedOut: Boolean = false,
     val stage: String? = null,
+    val fraction: Float? = null,
 ) {
     val progress: Float?
-        get() = if (totalBytes > 0) (bytesSent.toFloat() / totalBytes).coerceIn(0f, 1f) else null
+        get() = when {
+            totalBytes > 0 -> (bytesSent.toFloat() / totalBytes).coerceIn(0f, 1f)
+            fraction != null -> fraction.coerceIn(0f, 1f)
+            else -> null
+        }
 }
 
 /**
@@ -66,6 +72,7 @@ class AnalysisRepository(
     private val dao: AnalysisRecordDao,
     private val api: AnalysisApi,
     private val settingsStore: SettingsStore,
+    private val onDeviceAnalyzer: OnDeviceAnalyzer,
     private val json: Json = Json { ignoreUnknownKeys = true },
     private val scope: CoroutineScope,
     private val now: () -> Long = System::currentTimeMillis,
@@ -143,7 +150,11 @@ class AnalysisRepository(
         }
     }
 
-    suspend fun createRecord(video: SelectedVideo, hoopRoi: HoopRoi? = null): AnalysisRecord {
+    suspend fun createRecord(
+        video: SelectedVideo,
+        hoopRoi: HoopRoi? = null,
+        mode: AnalysisMode = AnalysisMode.CLOUD,
+    ): AnalysisRecord {
         val timestamp = now()
         val record = AnalysisRecord(
             localId = UUID.randomUUID().toString(),
@@ -154,8 +165,13 @@ class AnalysisRepository(
             filename = video.filename,
             sizeBytes = video.sizeBytes,
             durationMs = video.durationMs,
-            status = AnalysisStatus.UPLOADING,
+            status = if (mode == AnalysisMode.ON_DEVICE) {
+                AnalysisStatus.PROCESSING
+            } else {
+                AnalysisStatus.UPLOADING
+            },
             hoopRoi = hoopRoi,
+            mode = mode,
             updatedAt = timestamp,
         )
         dao.upsert(record.toEntity())
@@ -196,7 +212,11 @@ class AnalysisRepository(
             }
             dao.resetForRetry(
                 localId = recordId,
-                status = AnalysisStatus.UPLOADING.name,
+                status = if (entity.mode == AnalysisMode.ON_DEVICE.name) {
+                    AnalysisStatus.PROCESSING.name
+                } else {
+                    AnalysisStatus.UPLOADING.name
+                },
                 updatedAt = now(),
             )
             _active.update { it - recordId }
@@ -256,6 +276,11 @@ class AnalysisRepository(
         val status = entity.status.toStatus() ?: AnalysisStatus.FAILED
         if (status == AnalysisStatus.COMPLETED || status == AnalysisStatus.EXPIRED) return
 
+        if (entity.mode == AnalysisMode.ON_DEVICE.name) {
+            runOnDevice(recordId, entity)
+            return
+        }
+
         var jobId = entity.serverJobId
         if (jobId == null) {
             val file = entity.localVideoPath?.let(::File)
@@ -311,6 +336,68 @@ class AnalysisRepository(
         }
         val jobIdToPoll = jobId ?: return
         poll(recordId, jobIdToPoll)
+    }
+
+    /**
+     * Runs detection locally. The video file is already in the app cache, so
+     * this path never calls [AnalysisApi.upload] and works without a server.
+     */
+    private suspend fun runOnDevice(recordId: String, entity: AnalysisRecordEntity) {
+        val file = entity.localVideoPath?.let(::File)
+        if (file == null || !file.exists()) {
+            markFailed(recordId, AnalysisStatus.FAILED, AnalysisError.VIDEO_MISSING, null)
+            return
+        }
+        val startedAt = elapsedRealtime()
+        dao.updateStatus(recordId, AnalysisStatus.PROCESSING.name, now())
+        setActive(
+            recordId,
+            ActiveAnalysis(
+                phase = ActivePhase.PROCESSING,
+                stage = "detecting",
+                fraction = 0f,
+            ),
+        )
+        try {
+            val result = onDeviceAnalyzer.analyze(
+                videoFile = file,
+                hoopRoi = HoopRoi.parse(entity.hoopRoi),
+                durationMs = entity.durationMs,
+            ) { fraction ->
+                setActive(
+                    recordId,
+                    ActiveAnalysis(
+                        phase = ActivePhase.PROCESSING,
+                        elapsedMs = elapsedRealtime() - startedAt,
+                        stage = "detecting",
+                        fraction = fraction,
+                    ),
+                )
+            }
+            dao.markCompleted(
+                localId = recordId,
+                status = AnalysisStatus.COMPLETED.name,
+                resultJson = json.encodeToString(AnalysisResult.serializer(), result),
+                updatedAt = now(),
+            )
+            _active.update { it - recordId }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: OnDeviceAnalysisException) {
+            markFailed(
+                recordId,
+                AnalysisStatus.FAILED,
+                AnalysisError.ANALYSIS_FAILED,
+                error.message,
+            )
+        } catch (error: Exception) {
+            markFailed(
+                recordId,
+                AnalysisStatus.FAILED,
+                AnalysisError.ANALYSIS_FAILED,
+                error.message,
+            )
+        }
     }
 
     private suspend fun poll(recordId: String, jobId: String) {
@@ -473,6 +560,7 @@ class AnalysisRepository(
         durationMs = durationMs,
         status = status.toStatus() ?: AnalysisStatus.FAILED,
         hoopRoi = HoopRoi.parse(hoopRoi),
+        mode = runCatching { AnalysisMode.valueOf(mode) }.getOrDefault(AnalysisMode.CLOUD),
         result = resultJson?.let { stored ->
             runCatching {
                 json.decodeFromString(AnalysisResult.serializer(), stored)
@@ -494,6 +582,7 @@ class AnalysisRepository(
         durationMs = durationMs,
         status = status.name,
         hoopRoi = hoopRoi?.toFormValue(),
+        mode = mode.name,
         resultJson = result?.let { json.encodeToString(AnalysisResult.serializer(), it) },
         errorCode = errorCode?.name,
         errorDetail = errorDetail,

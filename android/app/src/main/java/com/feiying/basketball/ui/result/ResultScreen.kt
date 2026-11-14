@@ -52,6 +52,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.navigation.NavHostController
 import com.feiying.basketball.R
 import com.feiying.basketball.data.AppContainer
+import com.feiying.basketball.domain.AnalysisMode
 import com.feiying.basketball.domain.AnalysisRecord
 import com.feiying.basketball.domain.AnalysisStatus
 import com.feiying.basketball.domain.Formatters
@@ -206,6 +207,11 @@ fun ResultContent(
         if (record.status == AnalysisStatus.EXPIRED) {
             item {
                 InfoBanner(stringResource(R.string.result_expired_snapshot))
+            }
+        }
+        if (record.mode == AnalysisMode.ON_DEVICE) {
+            item {
+                InfoBanner(stringResource(R.string.result_local_banner))
             }
         }
         item {

@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -47,6 +48,7 @@ import com.feiying.basketball.R
 import com.feiying.basketball.data.ActiveAnalysis
 import com.feiying.basketball.data.ActivePhase
 import com.feiying.basketball.data.AppContainer
+import com.feiying.basketball.domain.AnalysisMode
 import com.feiying.basketball.domain.AnalysisRecord
 import com.feiying.basketball.domain.AnalysisStatus
 import com.feiying.basketball.domain.Formatters
@@ -221,6 +223,7 @@ fun AnalysisContent(
     onRetry: () -> Unit,
     onHome: () -> Unit,
 ) {
+    val isLocal = record.mode == AnalysisMode.ON_DEVICE
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -242,10 +245,10 @@ fun AnalysisContent(
                 modifier = Modifier.padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                StatusIcon(record.status)
+                StatusIcon(record.status, isLocal)
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    text = statusTitle(record, active),
+                    text = statusTitle(record, active, isLocal),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                     textAlign = TextAlign.Center,
@@ -263,7 +266,11 @@ fun AnalysisContent(
                     AnalysisStatus.UPLOADING -> UploadingBody(active)
                     AnalysisStatus.QUEUED,
                     AnalysisStatus.PROCESSING,
-                    -> WaitingBody(record, active)
+                    -> if (isLocal) {
+                        LocalProcessingBody(active)
+                    } else {
+                        WaitingBody(record, active, isLocal = false)
+                    }
 
                     AnalysisStatus.UPLOAD_INTERRUPTED -> {
                         Text(
@@ -366,30 +373,38 @@ fun AnalysisContent(
 }
 
 @Composable
-private fun StatusIcon(status: AnalysisStatus) {
-    val icon = when (status) {
-        AnalysisStatus.COMPLETED -> Icons.Filled.CheckCircle
-        AnalysisStatus.FAILED, AnalysisStatus.EXPIRED -> Icons.Filled.ErrorOutline
-        AnalysisStatus.UPLOADING -> Icons.Filled.Upload
+private fun StatusIcon(status: AnalysisStatus, isLocal: Boolean) {
+    val icon = when {
+        status == AnalysisStatus.COMPLETED -> Icons.Filled.CheckCircle
+        status == AnalysisStatus.FAILED || status == AnalysisStatus.EXPIRED ->
+            Icons.Filled.ErrorOutline
+        status == AnalysisStatus.UPLOADING -> Icons.Filled.Upload
+        isLocal -> Icons.Filled.Smartphone
         else -> Icons.Filled.HourglassTop
     }
     Icon(
         imageVector = icon,
         contentDescription = null,
         modifier = Modifier.size(56.dp),
-        tint = when (status) {
-            AnalysisStatus.COMPLETED -> MaterialTheme.colorScheme.primary
-            AnalysisStatus.FAILED, AnalysisStatus.EXPIRED -> MaterialTheme.colorScheme.error
+        tint = when {
+            status == AnalysisStatus.COMPLETED -> MaterialTheme.colorScheme.primary
+            status == AnalysisStatus.FAILED || status == AnalysisStatus.EXPIRED ->
+                MaterialTheme.colorScheme.error
             else -> MaterialTheme.colorScheme.tertiary
         },
     )
 }
 
 @Composable
-private fun statusTitle(record: AnalysisRecord, active: ActiveAnalysis?): String = when (record.status) {
+private fun statusTitle(
+    record: AnalysisRecord,
+    active: ActiveAnalysis?,
+    isLocal: Boolean,
+): String = when (record.status) {
     AnalysisStatus.UPLOADING -> stringResource(R.string.analysis_uploading)
     AnalysisStatus.QUEUED -> stringResource(R.string.analysis_queued)
     AnalysisStatus.PROCESSING -> when {
+        isLocal -> stringResource(R.string.analysis_local_processing)
         active?.phase == ActivePhase.NETWORK_RETRY ->
             stringResource(R.string.analysis_network_retry)
 
@@ -443,7 +458,54 @@ private fun UploadingBody(active: ActiveAnalysis?) {
 }
 
 @Composable
-private fun WaitingBody(record: AnalysisRecord, active: ActiveAnalysis?) {
+private fun LocalProcessingBody(active: ActiveAnalysis?) {
+    val progress = active?.progress
+    LinearProgressIndicator(
+        progress = { progress ?: 0f },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        text = if (progress != null) {
+            stringResource(R.string.analysis_local_progress, (progress * 100).roundToInt())
+        } else {
+            stringResource(R.string.analysis_local_processing)
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.padding(top = 10.dp),
+    )
+    if (active != null && active.elapsedMs > 0) {
+        Text(
+            text = stringResource(
+                R.string.analysis_elapsed,
+                Formatters.duration(active.elapsedMs),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = stringResource(R.string.analysis_hint_local),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+    )
+    Text(
+        text = stringResource(R.string.analysis_hint_local_wait),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+@Composable
+private fun WaitingBody(
+    record: AnalysisRecord,
+    active: ActiveAnalysis?,
+    isLocal: Boolean,
+) {
     CircularProgressIndicator(modifier = Modifier.size(36.dp), strokeWidth = 3.dp)
     Spacer(Modifier.height(14.dp))
     if (active != null) {
@@ -456,19 +518,23 @@ private fun WaitingBody(record: AnalysisRecord, active: ActiveAnalysis?) {
         )
     }
     Text(
-        text = stringResource(R.string.analysis_hint_leave),
+        text = stringResource(
+            if (isLocal) R.string.analysis_hint_local else R.string.analysis_hint_leave,
+        ),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
         modifier = Modifier.padding(top = 8.dp),
     )
-    Text(
-        text = stringResource(R.string.analysis_hint_network),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.padding(top = 4.dp),
-    )
+    if (!isLocal) {
+        Text(
+            text = stringResource(R.string.analysis_hint_network),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
     if (active?.phase == ActivePhase.NETWORK_RETRY) {
         Text(
             text = stringResource(R.string.analysis_network_retry),

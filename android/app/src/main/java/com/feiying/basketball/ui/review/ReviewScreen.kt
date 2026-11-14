@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,14 +19,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -37,12 +44,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -54,6 +63,7 @@ import com.feiying.basketball.data.AppContainer
 import com.feiying.basketball.data.ImportErrorReason
 import com.feiying.basketball.data.VideoFiles
 import com.feiying.basketball.data.VideoImportException
+import com.feiying.basketball.domain.AnalysisMode
 import com.feiying.basketball.domain.Formatters
 import com.feiying.basketball.domain.HoopRoi
 import com.feiying.basketball.domain.SelectedVideo
@@ -82,6 +92,7 @@ fun ReviewRoute(
     var pickingFrame by remember { mutableStateOf(false) }
     var hoopRoi by remember { mutableStateOf<HoopRoi?>(null) }
     var pickerBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var mode by rememberSaveable { mutableStateOf(AnalysisMode.CLOUD) }
 
     LaunchedEffect(selected) {
         starting = false
@@ -118,6 +129,8 @@ fun ReviewRoute(
                 videoExists = video.file.exists(),
                 starting = starting || importing || pickingFrame,
                 hoopRoi = hoopRoi,
+                mode = mode,
+                onModeChange = { mode = it },
                 onPickHoopRoi = {
                     if (!pickingFrame) {
                         pickingFrame = true
@@ -140,7 +153,7 @@ fun ReviewRoute(
                     starting = true
                     scope.launch {
                         try {
-                            val record = container.repository.createRecord(video, hoopRoi)
+                            val record = container.repository.createRecord(video, hoopRoi, mode)
                             container.repository.start(record.localId)
                             navController.navigate(Routes.analysis(record.localId))
                         } catch (error: Exception) {
@@ -209,6 +222,8 @@ fun ReviewContent(
     videoExists: Boolean,
     starting: Boolean,
     hoopRoi: HoopRoi? = null,
+    mode: AnalysisMode = AnalysisMode.CLOUD,
+    onModeChange: (AnalysisMode) -> Unit = {},
     onPickHoopRoi: () -> Unit = {},
     onClearHoopRoi: () -> Unit = {},
     onBack: () -> Unit,
@@ -322,6 +337,13 @@ fun ReviewContent(
         }
 
         Spacer(Modifier.height(20.dp))
+        RecognitionModeSection(
+            mode = mode,
+            enabled = videoExists && !starting,
+            onModeChange = onModeChange,
+        )
+
+        Spacer(Modifier.height(16.dp))
         HoopRoiSection(
             hoopRoi = hoopRoi,
             enabled = videoExists && !starting,
@@ -346,7 +368,13 @@ fun ReviewContent(
                 )
             } else {
                 Text(
-                    text = stringResource(R.string.review_start),
+                    text = stringResource(
+                        if (mode == AnalysisMode.ON_DEVICE) {
+                            R.string.review_start_local
+                        } else {
+                            R.string.review_start
+                        },
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
@@ -367,6 +395,113 @@ fun ReviewContent(
             )
         }
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun RecognitionModeSection(
+    mode: AnalysisMode,
+    enabled: Boolean,
+    onModeChange: (AnalysisMode) -> Unit,
+) {
+    Column {
+        Text(
+            text = stringResource(R.string.review_mode_label),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ModeOption(
+                modifier = Modifier.weight(1f),
+                selected = mode == AnalysisMode.CLOUD,
+                enabled = enabled,
+                icon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Cloud,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                    )
+                },
+                title = stringResource(R.string.review_mode_cloud_title),
+                description = stringResource(R.string.review_mode_cloud_desc),
+                onClick = { onModeChange(AnalysisMode.CLOUD) },
+            )
+            ModeOption(
+                modifier = Modifier.weight(1f),
+                selected = mode == AnalysisMode.ON_DEVICE,
+                enabled = enabled,
+                icon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Smartphone,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                    )
+                },
+                title = stringResource(R.string.review_mode_local_title),
+                description = stringResource(R.string.review_mode_local_desc),
+                onClick = { onModeChange(AnalysisMode.ON_DEVICE) },
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = stringResource(
+                if (mode == AnalysisMode.ON_DEVICE) {
+                    R.string.review_mode_local_hint
+                } else {
+                    R.string.review_mode_cloud_hint
+                },
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ModeOption(
+    modifier: Modifier,
+    selected: Boolean,
+    enabled: Boolean,
+    icon: @Composable () -> Unit,
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = modifier.selectable(
+            selected = selected,
+            enabled = enabled,
+            role = Role.RadioButton,
+            onClick = onClick,
+        ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+            },
+        ),
+        border = if (selected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            null
+        },
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                icon()
+                Spacer(Modifier.weight(1f))
+                RadioButton(selected = selected, onClick = null, enabled = enabled)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(text = title, style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

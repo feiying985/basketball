@@ -11,6 +11,18 @@ enum class VideoSource {
 }
 
 /**
+ * Where a video is analyzed.
+ *
+ * [CLOUD] uploads the video and lets the server detect shots (and generate
+ * clips). [ON_DEVICE] keeps the video on the phone and runs the detector there,
+ * so no video bytes leave the device.
+ */
+enum class AnalysisMode {
+    CLOUD,
+    ON_DEVICE,
+}
+
+/**
  * Client-side analysis status.
  *
  * [UPLOADING] and [UPLOAD_INTERRUPTED] only exist locally; the other values mirror the
@@ -94,6 +106,7 @@ data class AnalysisRecord(
     val durationMs: Long?,
     val status: AnalysisStatus,
     val hoopRoi: HoopRoi? = null,
+    val mode: AnalysisMode = AnalysisMode.CLOUD,
     val result: AnalysisResult? = null,
     val errorCode: AnalysisError? = null,
     val errorDetail: String? = null,
