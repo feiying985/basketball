@@ -243,13 +243,15 @@ sudo -u basketball .venv/bin/pip install -r requirements.txt
 
 | 模式 | 用途 | 关键变量 |
 | --- | --- | --- |
-| 验收模式 | 先把服务跑通，不接真实短信 | `BASKETBALL_ENV=development`、`BASKETBALL_SMS_PROVIDER=dev`、`BASKETBALL_REQUIRE_AUTH=false`；验证码只写服务端日志，不产生短信费用 |
+| 验收模式 | 先把服务跑通，不接真实短信 | `BASKETBALL_ENV=development`、`BASKETBALL_SMS_PROVIDER=dev`、`BASKETBALL_REQUIRE_AUTH=false`；验证码只写服务端日志，不产生短信费用，App 调试可直接用固定验证码 `666666` |
 | 生产模式 | 给真实用户使用 | `BASKETBALL_ENV=production`、`BASKETBALL_SMS_PROVIDER=aliyun`、阿里云短信 4 项 + `BASKETBALL_SMS_CODE_PEPPER`；建议 `BASKETBALL_REQUIRE_AUTH=true` |
 
 `BASKETBALL_ENV=production` 时，`server/app/config.py` 会在启动阶段强制检查短信配置：
 仍用 `dev` provider、或缺少 AccessKey/签名/模板/pepper，都会直接报错退出。**不要在还没准备好
 短信时把 `BASKETBALL_ENV` 改成 `production`**；先用验收模式跑通，再按 5.1.2 切生产。
-验收模式下验证码不会发短信，用 `sudo journalctl -u basketball | grep dev-sms` 查看。
+验收模式下验证码不会发短信，可用 `sudo journalctl -u basketball | grep dev-sms` 查看，
+也可以先点一次「获取验证码」，然后直接输入固定验证码 `666666`（仍受有效期、尝试次数和限流约束）。
+固定验证码只在开发/验收模式生效，生产模式和真实短信实现下自动禁用。
 
 #### 5.1.2 阿里云短信准备（生产模式）
 
@@ -1024,6 +1026,7 @@ git checkout <包含该提交的 commit>
 | `BASKETBALL_TOKEN_TTL_DAYS` | `30` | 登录 token 有效天数；`0` 表示不过期 |
 | `BASKETBALL_ENV` | `development` | `production` 时禁止 `dev` 短信，并强制检查阿里云短信配置 |
 | `BASKETBALL_SMS_PROVIDER` | `dev` | `dev`=验证码只写日志；`aliyun`=真实短信 |
+| `BASKETBALL_SMS_DEBUG_CODE` | 空（开发默认 `666666`） | 调试用固定验证码；仅开发/验收模式生效，生产禁用；设为 `off` 关闭 |
 | `BASKETBALL_SMS_ACCESS_KEY_ID` / `..._SECRET` | 空 | 阿里云 RAM AccessKey；生产必填 |
 | `BASKETBALL_SMS_SIGN_NAME` / `..._TEMPLATE_CODE` | 空 | 已审核的短信签名和模板 CODE；生产必填 |
 | `BASKETBALL_SMS_REGION` | `cn-hangzhou` | 短信服务地域 |

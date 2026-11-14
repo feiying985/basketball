@@ -129,6 +129,9 @@ Authorization: Bearer <token>
   全站每天 1000 次（均可用环境变量调整）。
 - dev 模式只把验证码写入服务端日志；生产使用阿里云短信，必须配置签名、模板和
   `BASKETBALL_SMS_CODE_PEPPER`。
+- 开发/验收模式额外接受固定调试验证码 `666666`（可用 `BASKETBALL_SMS_DEBUG_CODE` 修改，
+  设为 `off` 关闭）：仍需先调用发码接口，且受有效期、尝试次数和限流约束。生产模式和
+  真实短信实现下该固定码自动禁用。
 
 ### 3.3 接口
 
@@ -200,7 +203,8 @@ pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-另开一个终端（默认 `BASKETBALL_SMS_PROVIDER=dev`，验证码会出现在 uvicorn 日志里）：
+另开一个终端（默认 `BASKETBALL_SMS_PROVIDER=dev`，验证码会出现在 uvicorn 日志里；
+开发阶段也可以直接用固定验证码 `666666`，无需翻日志）：
 
 ```bash
 # 发送注册验证码；从服务端日志找到 [dev-sms] ... code=123456
@@ -208,7 +212,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/auth/sms-code \
   -H 'Content-Type: application/json' \
   -d '{"phone":"13800138000","purpose":"register"}'
 
-# 注册（替换 CODE）
+# 注册（替换 CODE；开发阶段可直接填 666666）
 TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"phone":"13800138000","code":"CODE","password":"demo-password"}' \

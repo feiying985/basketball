@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_UPLOAD_DIR = Path(tempfile.gettempdir()) / "basketball-uploads"
 DEFAULT_DATA_DIR = Path(tempfile.gettempdir()) / "basketball-data"
+
+# Code the app team enters while SMS delivery is not wired up yet.  It is
+# accepted in addition to the generated code only outside production and only
+# with the ``dev`` SMS provider.
+DEFAULT_SMS_DEBUG_CODE = "666666"
+_SMS_DEBUG_CODE_OFF = {"off", "false", "none", "disabled"}
 
 
 def _env_float(name: str, default: float) -> float:
@@ -86,6 +93,12 @@ def _env_database_path() -> Path:
 def _env_clip_dir() -> Path | None:
     configured = os.getenv("BASKETBALL_CLIP_DIR", "").strip()
     return Path(configured) if configured else None
+
+
+def _env_sms_debug_code() -> str | None:
+    raw = os.getenv("BASKETBALL_SMS_DEBUG_CODE", "").strip()
+    # ``None`` means explicitly disabled; ``""`` means unset (use the default).
+    return None if raw.lower() in _SMS_DEBUG_CODE_OFF else raw
 
 
 def parse_hoop_roi(
@@ -185,6 +198,9 @@ class Settings:
         "BASKETBALL_SMS_DAILY_LIMIT", 1000, minimum=1, maximum=100000
     )
     sms_code_pepper: str = os.getenv("BASKETBALL_SMS_CODE_PEPPER", "").strip()
+    # Debug-only fixed code accepted in addition to the generated one.  Set
+    # ``BASKETBALL_SMS_DEBUG_CODE=off`` to disable the development default.
+    sms_debug_code: str | None = _env_sms_debug_code()
     login_max_failures: int = _env_int(
         "BASKETBALL_LOGIN_MAX_FAILURES", 10, minimum=1, maximum=100
     )
@@ -216,6 +232,18 @@ class Settings:
 
         return self.clip_dir if self.clip_dir is not None else self.upload_dir / "clips"
 
+    @property
+    def effective_sms_debug_code(self) -> str | None:
+        """Fixed code accepted during debugging, or ``None`` outside dev mode."""
+
+        if self.sms_debug_code:
+            return self.sms_debug_code
+        if self.sms_debug_code is None:
+            return None
+        if self.env != "production" and self.sms_provider == "dev":
+            return DEFAULT_SMS_DEBUG_CODE
+        return None
+
     def __post_init__(self) -> None:
         if not 0 <= self.hue_min < self.hue_max <= 179:
             raise ValueError("BASKETBALL_HUE_MIN 必须小于 BASKETBALL_HUE_MAX，且都在 0-179 之间")
@@ -225,6 +253,15 @@ class Settings:
             raise ValueError("BASKETBALL_HOOP_MIN_CONFIDENCE 需要 0-1 之间的小数")
         if self.sms_provider not in {"dev", "aliyun"}:
             raise ValueError("BASKETBALL_SMS_PROVIDER 只能是 dev 或 aliyun")
+        if self.sms_debug_code:
+            if not re.fullmatch(r"\d{6}", self.sms_debug_code):
+                raise ValueError(
+                    "BASKETBALL_SMS_DEBUG_CODE 必须是 6 位数字，或设为 off 关闭"
+                )
+            if self.env == "production":
+                raise ValueError("生产环境禁止使用固定调试验证码")
+            if self.sms_provider != "dev":
+                raise ValueError("固定调试验证码只能配合 dev 短信实现使用")
         if self.env == "production" and self.sms_provider == "dev":
             raise ValueError("生产环境必须使用真实的短信服务，不能使用 dev provider")
         if self.sms_provider == "aliyun":
