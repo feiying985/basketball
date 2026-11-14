@@ -9,6 +9,7 @@
 > 分析完成后用系统 ffmpeg 为每个命中球生成前后 5 秒的 MP4；
 > 分析任务和账号保存到 SQLite，重启不丢结果，并支持注册/登录与任务归属。
 > GitHub 现成方案调研见 [docs/research/shot-recognition.md](docs/research/shot-recognition.md)，
+> 商业竞品调研见 [docs/research/competitor-analysis.md](docs/research/competitor-analysis.md)，
 > 算法与限制见 [docs/shot-detection.md](docs/shot-detection.md)，
 > 进球片段设计见 [docs/shot-clips.md](docs/shot-clips.md)，
 > 持久化与账号设计见 [docs/server-persistence-accounts.md](docs/server-persistence-accounts.md)，
